@@ -56,6 +56,9 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final String[] MENU_OPTIONS = {"Restart", "Quit"};
     private static final long START_TIME_MILLIS = 5 * 60 * 1000; // 5 minutes
     private long remainingTimeMillis = START_TIME_MILLIS;
+    private long lastUpdateTime = System.currentTimeMillis();
+    private long lastFootstepTime = 0;
+    private static final int FOOTSTEP_INTERVAL_MS = 300;
     private double floatPhase = 0;
     private final Timer timer;
     // Back-buffer for faster pixel operations
@@ -111,6 +114,7 @@ public class GamePanel extends JPanel implements ActionListener {
      * Start the main game timer which drives updates and repainting.
      */
     public void startGame() {
+        lastUpdateTime = System.currentTimeMillis();
         timer.start();
     }
 
@@ -126,7 +130,13 @@ public class GamePanel extends JPanel implements ActionListener {
      * Timer callback invoked every frame. Updates game state and requests repaint.
      */
     public void actionPerformed(ActionEvent e) {
-        updatePlayer();
+        long now = System.currentTimeMillis();
+        long deltaTime = now - lastUpdateTime;
+        if (deltaTime <= 0) {
+            deltaTime = 1;
+        }
+        lastUpdateTime = now;
+        updatePlayer(deltaTime);
         floatPhase += 0.08;
         repaint();
     }
@@ -134,13 +144,13 @@ public class GamePanel extends JPanel implements ActionListener {
     /**
      * Update player movement, handle collisions, update monster and check game state.
      */
-    private void updatePlayer() {
+    private void updatePlayer(long deltaTime) {
         if (levelComplete) {
             return;
         }
 
-        // Decrease remaining time; when it reaches zero the level ends.
-        remainingTimeMillis -= 1000 / FPS;
+        // Decrease remaining time using actual elapsed time so the countdown stays accurate.
+        remainingTimeMillis -= deltaTime;
         if (remainingTimeMillis <= 0) {
             remainingTimeMillis = 0;
             levelComplete = true;
@@ -184,11 +194,22 @@ public class GamePanel extends JPanel implements ActionListener {
         double nextX = playerX + dx;
         double nextY = playerY + dy;
 
+        boolean moved = false;
         if (!collides(nextX, playerY)) {
             playerX = nextX;
+            moved = true;
         }
         if (!collides(playerX, nextY)) {
             playerY = nextY;
+            moved = true;
+        }
+
+        if (moved && (moveForward || moveBackward || strafeLeft || strafeRight)) {
+            long now = System.currentTimeMillis();
+            if (now - lastFootstepTime >= FOOTSTEP_INTERVAL_MS) {
+                SoundPlayer.playFootstep();
+                lastFootstepTime = now;
+            }
         }
 
         monster.update(playerX, playerY, map, TILE_SIZE);
@@ -226,6 +247,8 @@ public class GamePanel extends JPanel implements ActionListener {
         monster.reset(monsterSpawn[0], monsterSpawn[1]);
         spawnBalls(OBJECTIVE_COUNT);
         SoundPlayer.stopMonsterSound();
+        lastFootstepTime = 0;
+        lastUpdateTime = System.currentTimeMillis();
         timer.start();
         remainingTimeMillis = START_TIME_MILLIS;
     }
