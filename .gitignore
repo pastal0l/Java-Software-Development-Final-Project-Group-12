@@ -1,0 +1,8 @@
+*.class
+# Java build artifacts
+*.class
+# IDE files
+.idea/
+*.iml
+.vscode/
+

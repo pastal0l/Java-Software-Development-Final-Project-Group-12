@@ -1,19 +1,28 @@
 import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.IOException;
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.Clip;
+import javax.sound.sampled.FloatControl;
 import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.SourceDataLine;
+import javax.sound.sampled.UnsupportedAudioFileException;
 
 public class SoundPlayer {
     private static final float SAMPLE_RATE = 44100f;
     private static final AudioFormat AUDIO_FORMAT = new AudioFormat(SAMPLE_RATE, 16, 1, true, false);
+    private static final File MONSTER_SOUND_FILE = new File("asset/monster sound.wav");
     private static final byte[] DING_BUFFER = createDingBuffer();
     private static Clip dingClip;
+    private static Clip monsterClip;
+    private static FloatControl monsterGainControl;
+    private static FloatControl monsterPanControl;
 
     static {
         initializeClip();
+        initializeMonsterSound();
     }
 
     private static void initializeClip() {
@@ -59,6 +68,49 @@ public class SoundPlayer {
         new Thread(SoundPlayer::playVictoryFanfare, "SoundPlayer-Victory").start();
     }
 
+    public static void updateMonsterSound(double pan, double volume) {
+        if (monsterClip == null) {
+            return;
+        }
+        if (!monsterClip.isRunning()) {
+            monsterClip.loop(Clip.LOOP_CONTINUOUSLY);
+            monsterClip.start();
+        }
+        setMonsterPan(pan);
+        setMonsterVolume(volume);
+    }
+
+    public static void stopMonsterSound() {
+        if (monsterClip == null) {
+            return;
+        }
+        setMonsterVolume(0.0);
+    }
+
+    private static void setMonsterVolume(double volume) {
+        if (monsterGainControl != null) {
+            double min = monsterGainControl.getMinimum();
+            double max = monsterGainControl.getMaximum();
+            double gain = volume <= 0.0001 ? min : 20.0 * Math.log10(volume);
+            gain = Math.max(min, Math.min(max, gain));
+            monsterGainControl.setValue((float) gain);
+        } else if (monsterClip != null) {
+            if (volume <= 0.01 && monsterClip.isRunning()) {
+                monsterClip.stop();
+            } else if (volume > 0.01 && !monsterClip.isRunning()) {
+                monsterClip.loop(Clip.LOOP_CONTINUOUSLY);
+                monsterClip.start();
+            }
+        }
+    }
+
+    private static void setMonsterPan(double pan) {
+        if (monsterPanControl != null) {
+            double clamped = Math.max(-1.0, Math.min(1.0, pan));
+            monsterPanControl.setValue((float) clamped);
+        }
+    }
+
     private static void playVictoryFanfare() {
         try (SourceDataLine line = AudioSystem.getSourceDataLine(AUDIO_FORMAT)) {
             line.open(AUDIO_FORMAT);
@@ -72,6 +124,29 @@ public class SoundPlayer {
             line.drain();
         } catch (LineUnavailableException e) {
             // Ignore sound errors so the game still runs.
+        }
+    }
+
+    private static void initializeMonsterSound() {
+        if (!MONSTER_SOUND_FILE.exists()) {
+            return;
+        }
+        try (AudioInputStream stream = AudioSystem.getAudioInputStream(MONSTER_SOUND_FILE)) {
+            monsterClip = AudioSystem.getClip();
+            monsterClip.open(stream);
+            if (monsterClip.isControlSupported(FloatControl.Type.MASTER_GAIN)) {
+                monsterGainControl = (FloatControl) monsterClip.getControl(FloatControl.Type.MASTER_GAIN);
+            }
+            if (monsterClip.isControlSupported(FloatControl.Type.PAN)) {
+                monsterPanControl = (FloatControl) monsterClip.getControl(FloatControl.Type.PAN);
+            }
+            setMonsterVolume(0.0);
+            setMonsterPan(0.0);
+            monsterClip.loop(Clip.LOOP_CONTINUOUSLY);
+        } catch (LineUnavailableException | IOException | UnsupportedAudioFileException e) {
+            monsterClip = null;
+            monsterGainControl = null;
+            monsterPanControl = null;
         }
     }
 
