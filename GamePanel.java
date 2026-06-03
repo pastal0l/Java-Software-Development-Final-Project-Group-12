@@ -10,6 +10,11 @@ import java.awt.event.ActionListener;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 
+/**
+ * GamePanel: main game component handling rendering, input, and updates.
+ * Implements the raycasting renderer, HUD/minimap, player movement,
+ * and updates the `Monster` AI and game state.
+ */
 public class GamePanel extends JPanel implements ActionListener {
     private static final int WIDTH = 800;
     private static final int HEIGHT = 600;
@@ -39,10 +44,14 @@ public class GamePanel extends JPanel implements ActionListener {
     private final int exitTileY = 8;
     private boolean levelComplete = false;
 
+    // initialize start position and angle
     private double playerX = startTileX * TILE_SIZE + TILE_SIZE / 2.0;
     private double playerY = startTileY * TILE_SIZE + TILE_SIZE / 2.0;
     private double playerAngle = Math.toRadians(45);
     private boolean moveForward, moveBackward, turnLeft, turnRight, strafeLeft, strafeRight;
+    private final Monster monster;
+    private static final long START_TIME_MILLIS = 5 * 60 * 1000; // 5 minutes
+    private long remainingTimeMillis = START_TIME_MILLIS;
     private final Timer timer;
     // Back-buffer for faster pixel operations
     private BufferedImage screenBuffer;
@@ -55,25 +64,47 @@ public class GamePanel extends JPanel implements ActionListener {
         setFocusable(true);
         addKeyListener(new InputAdapter());
 
+        monster = new Monster(8, 1, TILE_SIZE);
         timer = new Timer(1000 / FPS, this);
     }
 
+    /**
+     * Start the main game timer which drives updates and repainting.
+     */
     public void startGame() {
         timer.start();
     }
 
+    /**
+     * Request keyboard focus for this panel so input events are received.
+     */
     public void requestFocusForInput() {
         requestFocusInWindow();
     }
 
     @Override
+    /**
+     * Timer callback invoked every frame. Updates game state and requests repaint.
+     */
     public void actionPerformed(ActionEvent e) {
         updatePlayer();
         repaint();
     }
 
+    /**
+     * Update player movement, handle collisions, update monster and check game state.
+     */
     private void updatePlayer() {
         if (levelComplete) {
+            return;
+        }
+
+        // Decrease remaining time; when it reaches zero the level ends.
+        remainingTimeMillis -= 1000 / FPS;
+        if (remainingTimeMillis <= 0) {
+            remainingTimeMillis = 0;
+            levelComplete = true;
+            timer.stop();
             return;
         }
 
@@ -81,6 +112,7 @@ public class GamePanel extends JPanel implements ActionListener {
         double dy = 0;
 
         if (moveForward) {
+            // Move in the direction the player is facing
             dx += Math.cos(playerAngle) * MOVE_SPEED;
             dy += Math.sin(playerAngle) * MOVE_SPEED;
         }
@@ -113,17 +145,31 @@ public class GamePanel extends JPanel implements ActionListener {
             playerY = nextY;
         }
 
+        monster.update(playerX, playerY, map, TILE_SIZE);
+        if (monster.collidesWithPlayer(playerX, playerY, TILE_SIZE)) {
+            restartGame();
+            return;
+        }
+
         checkExit();
     }
 
+    /**
+     * Reset player and monster state and restart the timer for a new run.
+     */
     private void restartGame() {
         levelComplete = false;
         playerX = startTileX * TILE_SIZE + TILE_SIZE / 2.0;
         playerY = startTileY * TILE_SIZE + TILE_SIZE / 2.0;
         playerAngle = Math.toRadians(45);
+        monster.reset(8, 1);
         timer.start();
+        remainingTimeMillis = START_TIME_MILLIS;
     }
-
+    // Simple AABB collision check against the map grid
+    /**
+     * Check whether the provided point collides with a non-zero tile in the map.
+     */
     private boolean collides(double x, double y) {
         int mapX = (int) x / TILE_SIZE;
         int mapY = (int) y / TILE_SIZE;
@@ -133,6 +179,9 @@ public class GamePanel extends JPanel implements ActionListener {
         return map[mapY][mapX] != 0;
     }
 
+    /**
+     * Check whether the player is on the exit tile and finish the level.
+     */
     private void checkExit() {
         int mapX = (int) playerX / TILE_SIZE;
         int mapY = (int) playerY / TILE_SIZE;
@@ -144,15 +193,23 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     @Override
+    /**
+     * Swing paint callback. Draws the 3D scene, minimap, HUD and overlays.
+     */
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
         drawScene(g);
         drawMinimap(g);
+        drawHUD(g);
         if (levelComplete) {
             drawGameOver(g);
         }
     }
 
+    // Main rendering method: draws the 3D scene using raycasting
+    /**
+     * Perform raycasting to render the 3D view into the screen buffer.
+     */
     private void drawScene(Graphics g) {
         int width = getWidth();
         int height = getHeight();
@@ -221,8 +278,67 @@ public class GamePanel extends JPanel implements ActionListener {
 
         // Draw the prepared buffer once
         g.drawImage(screenBuffer, 0, 0, null);
+        drawMonsterSprite(g, width, height);
+    }
+    /**
+     * Draw a simple 2D sprite for the monster in the 3D view when visible.
+     */
+    private void drawMonsterSprite(Graphics g, int width, int height) {
+        double mx = monster.getX();
+        double my = monster.getY();
+        double dx = mx - playerX;
+        double dy = my - playerY;
+        double distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance <= 0) {
+            return;
+        }
+
+        double angleToMonster = Math.atan2(dy, dx);
+        double relativeAngle = normalizeAngle(angleToMonster - playerAngle);
+        double fov = Math.toRadians(60);
+        if (Math.abs(relativeAngle) > fov / 2) {
+            return;
+        }
+
+        // Use raw ray hit distance (along the ray) to test occlusion accurately.
+        RayHit rayHit = castRay(angleToMonster);
+        double wallDistanceRaw = rayHit.distance;
+        // If a wall is closer than the monster along this ray, the monster is occluded.
+        if (wallDistanceRaw + 1.0 < distance) {
+            return;
+        }
+
+        int screenX = (int) (((relativeAngle / (fov / 2)) * 0.5 + 0.5) * width);
+        int spriteSize = (int) ((TILE_SIZE * height) / distance * 0.4);
+        spriteSize = Math.max(12, Math.min(spriteSize, 80));
+        int spriteY = height / 2 - spriteSize / 2;
+
+        java.awt.image.BufferedImage sprite = monster.getSprite();
+        if (sprite != null) {
+            g.drawImage(sprite, screenX - spriteSize / 2, spriteY, spriteSize, spriteSize, null);
+        } else {
+            g.setColor(new Color(230, 40, 40, 220));
+            g.fillOval(screenX - spriteSize / 2, spriteY, spriteSize, spriteSize);
+            g.setColor(Color.BLACK);
+            g.drawOval(screenX - spriteSize / 2, spriteY, spriteSize, spriteSize);
+        }
     }
 
+    private double normalizeAngle(double angle) {
+        // Normalize angle into [-PI, PI]
+        while (angle > Math.PI) {
+            angle -= 2 * Math.PI;
+        }
+        while (angle < -Math.PI) {
+            angle += 2 * Math.PI;
+        }
+        return angle;
+    }
+
+    // DDA raycasting to find wall hit and texture info
+    /**
+     * Cast a DDA ray at the given angle and return hit information including texture coords.
+     */
     private RayHit castRay(double rayAngle) {
         double rayDirX = Math.cos(rayAngle);
         double rayDirY = Math.sin(rayAngle);
@@ -382,6 +498,9 @@ public class GamePanel extends JPanel implements ActionListener {
         return distance * Math.cos(rayAngle - playerAngle);
     }
 
+    /**
+     * Apply a simple shading factor to an RGB color.
+     */
     private int shadeColor(int rgb, double factor) {
         int r = (rgb >> 16) & 0xFF;
         int g = (rgb >> 8) & 0xFF;
@@ -392,6 +511,9 @@ public class GamePanel extends JPanel implements ActionListener {
         return (r << 16) | (g << 8) | b;
     }
 
+    /**
+     * Draw a small top-down minimap showing tiles, player, start/exit and the monster.
+     */
     private void drawMinimap(Graphics g) {
         int minimapSize = MAP_SIZE * 16;
         int offset = 10;
@@ -422,10 +544,33 @@ public class GamePanel extends JPanel implements ActionListener {
         int startPy = offset + startTileY * 16;
         g.setColor(Color.BLUE);
         g.fillOval(startPx + 4, startPy + 4, 8, 8);
+
+        monster.drawOnMinimap(g, offset, 16);
+    }
+
+    /**
+     * Draw on-screen HUD including elapsed time and monster state.
+     */
+    private void drawHUD(Graphics g) {
+        int width = getWidth();
+        int padding = 12;
+        int timeSeconds = (int) (remainingTimeMillis / 1000);
+        int minutes = timeSeconds / 60;
+        int seconds = timeSeconds % 60;
+        String timerText = String.format("Time: %02d:%02d", minutes, seconds);
+        g.setColor(new Color(0, 0, 0, 160));
+        g.fillRect(width - 220, 10, 210, 36);
+
+        g.setColor(Color.WHITE);
+        g.setFont(g.getFont().deriveFont(16f));
+        g.drawString(timerText, width - 208, 32);
     }
 
     private class InputAdapter extends KeyAdapter {
         @Override
+        /**
+         * Handle key press events to set movement flags.
+         */
         public void keyPressed(KeyEvent e) {
             switch (e.getKeyCode()) {
                 case KeyEvent.VK_W -> moveForward = true;
@@ -439,6 +584,9 @@ public class GamePanel extends JPanel implements ActionListener {
         }
 
         @Override
+        /**
+         * Handle key release events to clear movement flags.
+         */
         public void keyReleased(KeyEvent e) {
             switch (e.getKeyCode()) {
                 case KeyEvent.VK_W -> moveForward = false;
@@ -458,6 +606,9 @@ public class GamePanel extends JPanel implements ActionListener {
         final int side;
         final int[][] texture;
 
+        /**
+         * Construct a RayHit describing the wall hit and texture coordinates.
+         */
         RayHit(double distance, int wallType, int textureX, int side) {
             this.distance = distance;
             this.wallType = wallType;
@@ -497,17 +648,23 @@ public class GamePanel extends JPanel implements ActionListener {
         static final int[][] STONE = createStone();
         static final int[][] MARBLE = createMarble();
 
+        /**
+         * Generate a simple brick texture pattern.
+         */
         private static int[][] createBrick() {
             int[][] tex = new int[TEX_SIZE][TEX_SIZE];
             for (int y = 0; y < TEX_SIZE; y++) {
                 for (int x = 0; x < TEX_SIZE; x++) {
-                    int block = ((x / 16) + (y / 16)) % 2 == 0 ? 0xA04030 : 0x8B2A1D;
+                    int block = ((x / 16) + (y / 16)) % 2 == 0 ? 0xA04030 : 0x8B2A1D; // alternating brick colors
                     tex[x][y] = block;
                 }
             }
             return tex;
         }
 
+        /**
+         * Generate a simple wood planks texture.
+         */
         private static int[][] createWood() {
             int[][] tex = new int[TEX_SIZE][TEX_SIZE];
             for (int y = 0; y < TEX_SIZE; y++) {
@@ -522,6 +679,9 @@ public class GamePanel extends JPanel implements ActionListener {
             return tex;
         }
 
+        /**
+         * Generate a stone texture with slight color variation.
+         */
         private static int[][] createStone() {
             int[][] tex = new int[TEX_SIZE][TEX_SIZE];
             for (int y = 0; y < TEX_SIZE; y++) {
@@ -537,6 +697,9 @@ public class GamePanel extends JPanel implements ActionListener {
             return tex;
         }
 
+        /**
+         * Generate a marble-like tile texture.
+         */
         private static int[][] createMarble() {
             int[][] tex = new int[TEX_SIZE][TEX_SIZE];
             for (int y = 0; y < TEX_SIZE; y++) {
