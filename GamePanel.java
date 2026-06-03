@@ -49,7 +49,11 @@ public class GamePanel extends JPanel implements ActionListener {
     private double playerAngle = Math.toRadians(45);
     private boolean moveForward, moveBackward, turnLeft, turnRight, strafeLeft, strafeRight;
     private final Monster monster;
-    private final Door door;
+    private Door door;
+    private boolean gameOverMenu = false;
+    private boolean victory = false;
+    private int selectedMenuOption = 0;
+    private static final String[] MENU_OPTIONS = {"Restart", "Quit"};
     private static final long START_TIME_MILLIS = 5 * 60 * 1000; // 5 minutes
     private long remainingTimeMillis = START_TIME_MILLIS;
     private double floatPhase = 0;
@@ -65,9 +69,10 @@ public class GamePanel extends JPanel implements ActionListener {
         setFocusable(true);
         addKeyListener(new InputAdapter());
         generateRandomMap();
+        // place a door at the exit tile
         door = new Door(exitTileX, exitTileY);
-
-        monster = new Monster(monsterStartTileX, monsterStartTileY, TILE_SIZE);
+        int[] monsterSpawn = findEmptyMonsterSpawn();
+        monster = new Monster(monsterSpawn[0], monsterSpawn[1], TILE_SIZE);
         timer = new Timer(1000 / FPS, this);
         spawnBalls(OBJECTIVE_COUNT);
     }
@@ -83,6 +88,23 @@ public class GamePanel extends JPanel implements ActionListener {
         map[monsterStartTileY][monsterStartTileX - 1] = 0;
         map[monsterStartTileY][monsterStartTileX + 1] = 0;
         map[monsterStartTileY + 1][monsterStartTileX] = 0;
+    }
+
+    private int[] findEmptyMonsterSpawn() {
+        int spawnX;
+        int spawnY;
+        do {
+            spawnX = 1 + random.nextInt(MAP_SIZE - 2);
+            spawnY = 1 + random.nextInt(MAP_SIZE - 2);
+        } while (!isEmptyTile(spawnX, spawnY) || (spawnX == startTileX && spawnY == startTileY) || (spawnX == exitTileX && spawnY == exitTileY));
+        return new int[] {spawnX, spawnY};
+    }
+
+    private boolean isEmptyTile(int x, int y) {
+        if (x < 0 || x >= MAP_SIZE || y < 0 || y >= MAP_SIZE) {
+            return false;
+        }
+        return map[y][x] == 0;
     }
 
     /**
@@ -122,7 +144,13 @@ public class GamePanel extends JPanel implements ActionListener {
         if (remainingTimeMillis <= 0) {
             remainingTimeMillis = 0;
             levelComplete = true;
+            gameOverMenu = true;
+            victory = false;
+            selectedMenuOption = 0;
             timer.stop();
+            // Ensure the panel has focus to receive menu keys and show the overlay
+            requestFocusInWindow();
+            repaint();
             return;
         }
 
@@ -165,7 +193,13 @@ public class GamePanel extends JPanel implements ActionListener {
 
         monster.update(playerX, playerY, map, TILE_SIZE);
         if (monster.collidesWithPlayer(playerX, playerY, TILE_SIZE)) {
-            restartGame();
+            levelComplete = true;
+            gameOverMenu = true;
+            victory = false;
+            selectedMenuOption = 0;
+            timer.stop();
+            requestFocusInWindow();
+            repaint();
             return;
         }
 
@@ -178,12 +212,16 @@ public class GamePanel extends JPanel implements ActionListener {
      */
     private void restartGame() {
         levelComplete = false;
+        gameOverMenu = false;
+        victory = false;
+        selectedMenuOption = 0;
         victoryMusicPlayed = false;
         door.close();
         playerX = startTileX * TILE_SIZE + TILE_SIZE / 2.0;
         playerY = startTileY * TILE_SIZE + TILE_SIZE / 2.0;
         playerAngle = Math.toRadians(45);
-        monster.reset(8, 1);
+        int[] monsterSpawn = findEmptyMonsterSpawn();
+        monster.reset(monsterSpawn[0], monsterSpawn[1]);
         spawnBalls(OBJECTIVE_COUNT);
         timer.start();
         remainingTimeMillis = START_TIME_MILLIS;
@@ -252,7 +290,12 @@ public class GamePanel extends JPanel implements ActionListener {
     private void checkExit() {
         if (door.isOpen() && isPlayerTouchingDoor()) {
             levelComplete = true;
+            gameOverMenu = true;
+            victory = true;
+            selectedMenuOption = 0;
             timer.stop();
+            requestFocusInWindow();
+            repaint();
             if (!victoryMusicPlayed) {
                 victoryMusicPlayed = true;
                 SoundPlayer.playVictoryMusic();
@@ -294,8 +337,8 @@ public class GamePanel extends JPanel implements ActionListener {
         drawMinimap(g);
         drawHUD(g);
         drawStatus(g);
-        if (levelComplete) {
-            drawGameOver(g);
+        if (gameOverMenu) {
+            drawGameOverMenu(g);
         }
     }
 
@@ -397,11 +440,10 @@ public class GamePanel extends JPanel implements ActionListener {
             return;
         }
 
-        // Use raw ray hit distance (along the ray) to test occlusion accurately.
-        RayHit rayHit = castRay(angleToMonster);
-        double wallDistanceRaw = rayHit.distance;
-        // If a wall is closer than the monster along this ray, the monster is occluded.
-        if (wallDistanceRaw + 1.0 < distance) {
+        // Compute perpendicular (projection) distances for accurate occlusion test.
+        double spritePerpDist = distance * Math.cos(relativeAngle);
+        double wallPerpDist = castRayDistance(playerAngle + relativeAngle);
+        if (wallPerpDist + 1.0 < spritePerpDist) {
             return;
         }
 
@@ -730,6 +772,13 @@ public class GamePanel extends JPanel implements ActionListener {
         int startPy = offsetY + startTileY * 16;
         g.setColor(Color.BLUE);
         g.fillOval(startPx + 4, startPy + 4, 8, 8);
+        // Draw objective balls on minimap
+        g.setColor(Color.MAGENTA);
+        for (Ball ball : balls) {
+            int bx = offsetX + (int) (ball.x / TILE_SIZE * 16);
+            int by = offsetY + (int) (ball.y / TILE_SIZE * 16);
+            g.fillOval(bx - 4, by - 4, 8, 8);
+        }
 
         g.setColor(Color.YELLOW);
         for (Ball ball : balls) {
@@ -772,6 +821,27 @@ public class GamePanel extends JPanel implements ActionListener {
                 case KeyEvent.VK_D -> strafeRight = true;
                 case KeyEvent.VK_LEFT -> turnLeft = true;
                 case KeyEvent.VK_RIGHT -> turnRight = true;
+                case KeyEvent.VK_UP -> {
+                    if (gameOverMenu) {
+                        selectedMenuOption = (selectedMenuOption + MENU_OPTIONS.length - 1) % MENU_OPTIONS.length;
+                        requestFocusInWindow();
+                        repaint();
+                    }
+                }
+                case KeyEvent.VK_DOWN -> {
+                    if (gameOverMenu) {
+                        selectedMenuOption = (selectedMenuOption + 1) % MENU_OPTIONS.length;
+                        requestFocusInWindow();
+                        repaint();
+                    }
+                }
+                case KeyEvent.VK_ENTER -> {
+                    if (gameOverMenu) {
+                        selectGameOverMenuOption();
+                        requestFocusInWindow();
+                        repaint();
+                    }
+                }
                 case KeyEvent.VK_R -> restartGame();
             }
         }
@@ -789,6 +859,8 @@ public class GamePanel extends JPanel implements ActionListener {
                 case KeyEvent.VK_LEFT -> turnLeft = false;
                 case KeyEvent.VK_RIGHT -> turnRight = false;
             }
+            // Ensure visual feedback even if the main timer is stopped
+            if (gameOverMenu) repaint();
         }
     }
 
@@ -808,6 +880,14 @@ public class GamePanel extends JPanel implements ActionListener {
         }
     }
 
+    private void selectGameOverMenuOption() {
+        if (selectedMenuOption == 0) {
+            restartGame();
+        } else {
+            System.exit(0);
+        }
+    }
+
     private void drawStatus(Graphics g) {
         int width = getWidth();
         int statusWidth = 240;
@@ -822,28 +902,54 @@ public class GamePanel extends JPanel implements ActionListener {
         g.drawString(hint, 18, 52);
     }
 
-    private void drawGameOver(Graphics g) {
+    private void drawGameOverMenu(Graphics g) {
         int width = getWidth();
         int height = getHeight();
+        String title = victory ? "Victory!" : "Game Over";
+        String subtitle = victory ? "You reached the exit." : "You were defeated.";
 
-        g.setColor(new Color(0, 0, 0, 180));
+        g.setColor(new Color(0, 0, 0, 200));
         g.fillRect(0, 0, width, height);
 
+        int boxWidth = 420;
+        int boxHeight = 240;
+        int boxX = width / 2 - boxWidth / 2;
+        int boxY = height / 2 - boxHeight / 2;
+
         g.setColor(Color.WHITE);
-        g.fillRect(width / 2 - 220, height / 2 - 80, 440, 160);
+        g.fillRect(boxX, boxY, boxWidth, boxHeight);
         g.setColor(Color.BLACK);
-        g.drawRect(width / 2 - 220, height / 2 - 80, 440, 160);
+        g.drawRect(boxX, boxY, boxWidth, boxHeight);
 
         g.setColor(Color.BLACK);
-        g.setFont(g.getFont().deriveFont(32f));
-        String title = "Maze Complete!";
+        g.setFont(g.getFont().deriveFont(36f));
         int titleWidth = g.getFontMetrics().stringWidth(title);
-        g.drawString(title, width / 2 - titleWidth / 2, height / 2 - 20);
+        g.drawString(title, width / 2 - titleWidth / 2, boxY + 60);
 
-        g.setFont(g.getFont().deriveFont(18f));
-        String message = "You reached the exit. Press R to restart.";
-        int messageWidth = g.getFontMetrics().stringWidth(message);
-        g.drawString(message, width / 2 - messageWidth / 2, height / 2 + 20);
+        g.setFont(g.getFont().deriveFont(20f));
+        int subtitleWidth = g.getFontMetrics().stringWidth(subtitle);
+        g.drawString(subtitle, width / 2 - subtitleWidth / 2, boxY + 100);
+
+        g.setFont(g.getFont().deriveFont(22f));
+        for (int i = 0; i < MENU_OPTIONS.length; i++) {
+            String option = MENU_OPTIONS[i];
+            int optionY = boxY + 140 + i * 32;
+            if (i == selectedMenuOption) {
+                g.setColor(new Color(50, 100, 220));
+                g.fillRoundRect(width / 2 - 100, optionY - 24, 200, 30, 12, 12);
+                g.setColor(Color.WHITE);
+            } else {
+                g.setColor(Color.BLACK);
+            }
+            int optionWidth = g.getFontMetrics().stringWidth(option);
+            g.drawString(option, width / 2 - optionWidth / 2, optionY);
+        }
+
+        g.setFont(g.getFont().deriveFont(16f));
+        String hint = "Use UP/DOWN and ENTER to choose.";
+        int hintWidth = g.getFontMetrics().stringWidth(hint);
+        g.setColor(Color.DARK_GRAY);
+        g.drawString(hint, width / 2 - hintWidth / 2, boxY + boxHeight - 20);
     }
 
     private static class Textures {
