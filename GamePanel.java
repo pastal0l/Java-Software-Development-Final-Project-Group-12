@@ -37,8 +37,10 @@ public class GamePanel extends JPanel implements ActionListener {
 
     private final int startTileX = 1;
     private final int startTileY = 1;
-    private final int exitTileX = MAP_SIZE - 2;
-    private final int exitTileY = MAP_SIZE - 2;
+    private final int exitTileX = MAP_SIZE - 1;
+    private final int exitTileY = MAP_SIZE - 1;
+    private final int monsterStartTileX = 8;
+    private final int monsterStartTileY = 1;
     private boolean levelComplete = false;
     private boolean victoryMusicPlayed = false;
 
@@ -67,7 +69,7 @@ public class GamePanel extends JPanel implements ActionListener {
         generateRandomMap();
         door = new Door(exitTileX, exitTileY);
 
-        monster = new Monster(9, 1, TILE_SIZE);
+        monster = new Monster(monsterStartTileX, monsterStartTileY, TILE_SIZE);
         timer = new Timer(1000 / FPS, this);
         spawnBalls(OBJECTIVE_COUNT);
     }
@@ -152,7 +154,6 @@ public class GamePanel extends JPanel implements ActionListener {
         map[startTileY][startTileX + 1] = 0;
         map[startTileY + 1][startTileX] = 0;
         map[exitTileY][exitTileX - 1] = 0;
-        map[exitTileY - 1][exitTileX] = 0;
     }
 
     /**
@@ -334,10 +335,7 @@ public class GamePanel extends JPanel implements ActionListener {
      * Check whether the player is on the exit tile and finish the level.
      */
     private void checkExit() {
-        int mapX = (int) playerX / TILE_SIZE;
-        int mapY = (int) playerY / TILE_SIZE;
-
-        if (door.isOpen() && door.isPlayerNear(playerX, playerY, TILE_SIZE)) {
+        if (door.isOpen() && isPlayerTouchingDoor()) {
             levelComplete = true;
             timer.stop();
             if (!victoryMusicPlayed) {
@@ -345,6 +343,12 @@ public class GamePanel extends JPanel implements ActionListener {
                 SoundPlayer.playVictoryMusic();
             }
         }
+    }
+
+    private boolean isPlayerTouchingDoor() {
+        int mapX = (int) playerX / TILE_SIZE;
+        int mapY = (int) playerY / TILE_SIZE;
+        return mapX == exitTileX - 1 && mapY == exitTileY;
     }
 
     private boolean isExitOpen() {
@@ -782,6 +786,8 @@ public class GamePanel extends JPanel implements ActionListener {
                     if (isExitOpen()) {
                         g.setColor(Color.WHITE);
                         g.fillRect(offsetX + x * 16, offsetY + y * 16, 16, 16);
+                        g.setColor(Color.GRAY);
+                        g.drawRect(offsetX + x * 16, offsetY + y * 16, 16, 16);
                     } else {
                         g.setColor(new Color(34, 139, 34));
                         g.fillRect(offsetX + x * 16, offsetY + y * 16, 16, 16);
@@ -810,7 +816,14 @@ public class GamePanel extends JPanel implements ActionListener {
         g.setColor(Color.BLUE);
         g.fillOval(startPx + 4, startPy + 4, 8, 8);
 
-        monster.drawOnMinimap(g, offsetX, 16);
+        g.setColor(Color.YELLOW);
+        for (Ball ball : balls) {
+            int bx = offsetX + (int) (ball.x / TILE_SIZE * 16);
+            int by = offsetY + (int) (ball.y / TILE_SIZE * 16);
+            g.fillOval(bx - 3, by - 3, 6, 6);
+        }
+
+        monster.drawOnMinimap(g, offsetX, offsetY, 16);
     }
 
     /**
