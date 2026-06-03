@@ -11,11 +11,13 @@ public class Main {
     public static void main(String[] args) {
         JFrame frame = new JFrame("Pseudo-3D Raycaster");
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        frame.setResizable(false);
+        frame.setResizable(true);
 
         GamePanel panel = new GamePanel();
         frame.add(panel);
         frame.pack();
+        java.awt.Dimension screenSize = java.awt.Toolkit.getDefaultToolkit().getScreenSize();
+        frame.setSize(screenSize);
         frame.setLocationRelativeTo(null);
         frame.setVisible(true);
         panel.requestFocusForInput();
