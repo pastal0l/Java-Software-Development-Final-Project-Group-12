@@ -5,6 +5,9 @@ import java.awt.Dimension;
 import java.awt.Graphics;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.KeyAdapter;
@@ -19,6 +22,10 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final int MAP_SIZE = 10;
     private static final int TILE_SIZE = 64;
     private static final int TEX_SIZE = 64;
+    private static final int OBJECTIVE_COUNT = 3;
+
+    private final List<Ball> balls = new ArrayList<>();
+    private final Random random = new Random();
 
     private final int[][] map = {
             {3, 3, 3, 3, 3, 3, 3, 3, 3, 3},
@@ -29,20 +36,23 @@ public class GamePanel extends JPanel implements ActionListener {
             {3, 0, 0, 0, 3, 0, 0, 0, 0, 3},
             {3, 3, 3, 0, 3, 0, 3, 3, 0, 3},
             {3, 0, 0, 0, 0, 0, 0, 3, 0, 3},
-            {3, 0, 3, 3, 3, 3, 0, 0, 0, 3},
+            {3, 0, 3, 3, 3, 3, 0, 0, 0, 2},
             {3, 3, 3, 3, 3, 3, 3, 3, 3, 3}
     };
 
     private final int startTileX = 1;
     private final int startTileY = 1;
-    private final int exitTileX = 8;
+    private final int exitTileX = 9;
     private final int exitTileY = 8;
+    private final Door door = new Door(exitTileX, exitTileY);
     private boolean levelComplete = false;
+    private boolean victoryMusicPlayed = false;
 
     private double playerX = startTileX * TILE_SIZE + TILE_SIZE / 2.0;
     private double playerY = startTileY * TILE_SIZE + TILE_SIZE / 2.0;
     private double playerAngle = Math.toRadians(45);
     private boolean moveForward, moveBackward, turnLeft, turnRight, strafeLeft, strafeRight;
+    private double floatPhase = 0;
     private final Timer timer;
     // Back-buffer for faster pixel operations
     private BufferedImage screenBuffer;
@@ -56,6 +66,7 @@ public class GamePanel extends JPanel implements ActionListener {
         addKeyListener(new InputAdapter());
 
         timer = new Timer(1000 / FPS, this);
+        spawnBalls(OBJECTIVE_COUNT);
     }
 
     public void startGame() {
@@ -69,6 +80,7 @@ public class GamePanel extends JPanel implements ActionListener {
     @Override
     public void actionPerformed(ActionEvent e) {
         updatePlayer();
+        floatPhase += 0.08;
         repaint();
     }
 
@@ -113,34 +125,104 @@ public class GamePanel extends JPanel implements ActionListener {
             playerY = nextY;
         }
 
+        collectBalls();
         checkExit();
     }
 
     private void restartGame() {
         levelComplete = false;
+        victoryMusicPlayed = false;
+        door.close();
         playerX = startTileX * TILE_SIZE + TILE_SIZE / 2.0;
         playerY = startTileY * TILE_SIZE + TILE_SIZE / 2.0;
         playerAngle = Math.toRadians(45);
+        spawnBalls(OBJECTIVE_COUNT);
         timer.start();
+    }
+
+    private void spawnBalls(int count) {
+        balls.clear();
+        while (balls.size() < count) {
+            int tileX = 1 + random.nextInt(MAP_SIZE - 2);
+            int tileY = 1 + random.nextInt(MAP_SIZE - 2);
+            if (map[tileY][tileX] != 0) {
+                continue;
+            }
+            if ((tileX == startTileX && tileY == startTileY) || (tileX == exitTileX && tileY == exitTileY)) {
+                continue;
+            }
+            boolean exists = false;
+            for (Ball ball : balls) {
+                if ((int) (ball.x / TILE_SIZE) == tileX && (int) (ball.y / TILE_SIZE) == tileY) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (exists) {
+                continue;
+            }
+            double x = tileX * TILE_SIZE + TILE_SIZE / 2.0;
+            double y = tileY * TILE_SIZE + TILE_SIZE / 2.0;
+            balls.add(new Ball(x, y));
+        }
+    }
+
+    private void collectBalls() {
+        double pickupRadius = 18;
+        boolean collected = false;
+        for (int i = balls.size() - 1; i >= 0; i--) {
+            Ball ball = balls.get(i);
+            double dx = playerX - ball.x;
+            double dy = playerY - ball.y;
+            if (dx * dx + dy * dy <= pickupRadius * pickupRadius) {
+                balls.remove(i);
+                collected = true;
+            }
+        }
+        if (collected) {
+            SoundPlayer.playDing();
+            if (balls.isEmpty()) {
+                door.open();
+            }
+        }
     }
 
     private boolean collides(double x, double y) {
         int mapX = (int) x / TILE_SIZE;
         int mapY = (int) y / TILE_SIZE;
-        if (mapX < 0 || mapX >= MAP_SIZE || mapY < 0 || mapY >= MAP_SIZE) {
-            return true;
-        }
-        return map[mapY][mapX] != 0;
+        return isWallTile(mapX, mapY);
     }
 
     private void checkExit() {
         int mapX = (int) playerX / TILE_SIZE;
         int mapY = (int) playerY / TILE_SIZE;
 
-        if (mapX == exitTileX && mapY == exitTileY) {
+        if (door.isOpen() && door.isPlayerNear(playerX, playerY, TILE_SIZE)) {
             levelComplete = true;
             timer.stop();
+            if (!victoryMusicPlayed) {
+                victoryMusicPlayed = true;
+                SoundPlayer.playVictoryMusic();
+            }
         }
+    }
+
+    private boolean isExitOpen() {
+        return door.isOpen();
+    }
+
+    private int getMapTile(int mapX, int mapY) {
+        if (door.isAt(mapX, mapY)) {
+            return door.getMapValue();
+        }
+        return map[mapY][mapX];
+    }
+
+    private boolean isWallTile(int mapX, int mapY) {
+        if (mapX < 0 || mapX >= MAP_SIZE || mapY < 0 || mapY >= MAP_SIZE) {
+            return true;
+        }
+        return getMapTile(mapX, mapY) != 0;
     }
 
     @Override
@@ -148,6 +230,7 @@ public class GamePanel extends JPanel implements ActionListener {
         super.paintComponent(g);
         drawScene(g);
         drawMinimap(g);
+        drawStatus(g);
         if (levelComplete) {
             drawGameOver(g);
         }
@@ -189,11 +272,13 @@ public class GamePanel extends JPanel implements ActionListener {
         int rayCount = width / 2; // keep existing visual density
         double rayStep = fov / rayCount;
         double startAngle = playerAngle - fov / 2;
+        double[] rayDistances = new double[rayCount];
 
         for (int ray = 0; ray < rayCount; ray++) {
             double rayAngle = startAngle + ray * rayStep;
             RayHit hit = castRay(rayAngle);
             double correctedDistance = hit.distance * Math.cos(rayAngle - playerAngle);
+            rayDistances[ray] = correctedDistance;
             int lineHeight = (int) ((TILE_SIZE * height) / correctedDistance);
             if (lineHeight < 1) lineHeight = 1;
             if (lineHeight > height) lineHeight = height;
@@ -219,8 +304,89 @@ public class GamePanel extends JPanel implements ActionListener {
             }
         }
 
+        drawBallSprites(screenPixels, width, height, horizon, startAngle, rayStep, rayCount, rayDistances);
+
         // Draw the prepared buffer once
         g.drawImage(screenBuffer, 0, 0, null);
+    }
+
+    private void drawBallSprites(int[] pixels, int width, int height, int horizon, double startAngle, double rayStep, int rayCount, double[] rayDistances) {
+        double fov = Math.toRadians(60);
+        double projectionPlane = (width / 2.0) / Math.tan(fov / 2.0);
+
+        for (Ball ball : balls) {
+            double dx = ball.x - playerX;
+            double dy = ball.y - playerY;
+            double distance = Math.sqrt(dx * dx + dy * dy);
+            if (distance < 0.1) {
+                continue;
+            }
+
+            double angleToBall = Math.atan2(dy, dx);
+            double angleDiff = normalizeAngle(angleToBall - playerAngle);
+            if (Math.abs(angleDiff) > fov / 2.0) {
+                continue;
+            }
+
+            int spriteScreenX = (int) ((width / 2.0) + projectionPlane * Math.tan(angleDiff));
+            int spriteSize = (int) ((TILE_SIZE * height) / distance * 0.20);
+            if (spriteSize < 18) spriteSize = 18;
+            if (spriteSize > 90) spriteSize = 90;
+            int spriteHalf = spriteSize / 2;
+
+            int floatOffset = (int) (Math.sin(floatPhase + distance * 0.05) * 8);
+            int spriteScreenY = horizon - spriteHalf - 12 + floatOffset;
+            int spriteTop = spriteScreenY - spriteHalf;
+            int spriteBottom = spriteScreenY + spriteHalf;
+            int spriteLeft = spriteScreenX - spriteHalf;
+            int spriteRight = spriteScreenX + spriteHalf;
+
+            double wallDistance = castRayDistance(playerAngle + angleDiff);
+            if (wallDistance < distance - 1) {
+                continue;
+            }
+
+            int baseColor = 0x7ED6FF;
+            int glow = 0xD8F2FF;
+            for (int screenX = spriteLeft; screenX < spriteRight; screenX++) {
+                if (screenX < 0 || screenX >= width) continue;
+                int rayIndex = screenX / 2;
+                if (rayIndex < 0 || rayIndex >= rayCount) continue;
+                double spritePerpDist = distance * Math.cos(angleDiff);
+                if (spritePerpDist >= rayDistances[rayIndex] - 1) continue;
+                for (int screenY = spriteTop; screenY < spriteBottom; screenY++) {
+                    if (screenY < 0 || screenY >= height) continue;
+                    int dxSprite = screenX - spriteScreenX;
+                    int dySprite = screenY - spriteScreenY;
+                    int absX = Math.abs(dxSprite);
+                    int absY = Math.abs(dySprite);
+                    if (absX + absY > spriteHalf) continue;
+
+                    double facetShade;
+                    if (dySprite < 0) {
+                        facetShade = 1.15;
+                    } else if (dxSprite < 0) {
+                        facetShade = 0.95;
+                    } else {
+                        facetShade = 0.80;
+                    }
+                    double edge = 1.0 - (double) (absX + absY) / (spriteHalf * 2.0);
+                    int color = shadeColor(baseColor, Math.max(0.6, facetShade));
+                    if (absX + absY < spriteHalf / 4) {
+                        color = shadeColor(glow, 0.5 + edge * 0.5);
+                    }
+                    double depthFactor = 1.0 - (distance / 800.0);
+                    int shaded = shadeColor(color, Math.max(0.35, 0.5 + depthFactor * 0.5));
+                    pixels[screenY * width + screenX] = shaded;
+                }
+            }
+        }
+    }
+
+    private double normalizeAngle(double angle) {
+        while (angle <= -Math.PI) angle += Math.PI * 2;
+        while (angle > Math.PI) angle -= Math.PI * 2;
+        return angle;
     }
 
     private RayHit castRay(double rayAngle) {
@@ -271,9 +437,10 @@ public class GamePanel extends JPanel implements ActionListener {
             if (mapX < 0 || mapX >= MAP_SIZE || mapY < 0 || mapY >= MAP_SIZE) {
                 break;
             }
-            if (map[mapY][mapX] > 0) {
+            int tile = getMapTile(mapX, mapY);
+            if (tile > 0) {
                 hit = true;
-                wallType = map[mapY][mapX];
+                wallType = tile;
             }
         }
 
@@ -309,7 +476,10 @@ public class GamePanel extends JPanel implements ActionListener {
             textureX = TEX_SIZE - 1 - textureX;
         }
 
-        return new RayHit(distance, wallType, textureX, side);
+        int[][] texture = wallType == Door.DOOR_TILE
+                ? (isExitOpen() ? Textures.DOOR_OPEN : Textures.DOOR)
+                : Textures.STONE;
+        return new RayHit(distance, wallType, textureX, side, texture);
     }
 
     /**
@@ -363,7 +533,7 @@ public class GamePanel extends JPanel implements ActionListener {
             if (mapX < 0 || mapX >= MAP_SIZE || mapY < 0 || mapY >= MAP_SIZE) {
                 break;
             }
-            if (map[mapY][mapX] > 0) {
+            if (getMapTile(mapX, mapY) > 0) {
                 hit = true;
             }
         }
@@ -394,34 +564,51 @@ public class GamePanel extends JPanel implements ActionListener {
 
     private void drawMinimap(Graphics g) {
         int minimapSize = MAP_SIZE * 16;
-        int offset = 10;
+        int offsetX = 10;
+        int offsetY = 80;
         g.setColor(new Color(0, 0, 0, 160));
-        g.fillRect(offset - 4, offset - 4, minimapSize + 8, minimapSize + 8);
+        g.fillRect(offsetX - 4, offsetY - 4, minimapSize + 8, minimapSize + 8);
 
         for (int y = 0; y < MAP_SIZE; y++) {
             for (int x = 0; x < MAP_SIZE; x++) {
+                if (x == exitTileX && y == exitTileY) {
+                    if (isExitOpen()) {
+                        g.setColor(Color.WHITE);
+                        g.fillRect(offsetX + x * 16, offsetY + y * 16, 16, 16);
+                    } else {
+                        g.setColor(new Color(34, 139, 34));
+                        g.fillRect(offsetX + x * 16, offsetY + y * 16, 16, 16);
+                        g.setColor(new Color(120, 60, 20));
+                        g.fillRect(offsetX + x * 16 + 4, offsetY + y * 16 + 2, 8, 12);
+                        g.setColor(Color.BLACK);
+                        g.drawRect(offsetX + x * 16 + 4, offsetY + y * 16 + 2, 8, 12);
+                    }
+                    continue;
+                }
                 g.setColor(map[y][x] > 0 ? Color.DARK_GRAY : Color.LIGHT_GRAY);
-                g.fillRect(offset + x * 16, offset + y * 16, 16, 16);
+                g.fillRect(offsetX + x * 16, offsetY + y * 16, 16, 16);
             }
         }
 
         int px = (int) (playerX / TILE_SIZE * 16);
         int py = (int) (playerY / TILE_SIZE * 16);
         g.setColor(Color.RED);
-        g.fillOval(offset + px - 4, offset + py - 4, 8, 8);
-        int lineX = offset + px + (int) (Math.cos(playerAngle) * 12);
-        int lineY = offset + py + (int) (Math.sin(playerAngle) * 12);
-        g.drawLine(offset + px, offset + py, lineX, lineY);
+        g.fillOval(offsetX + px - 4, offsetY + py - 4, 8, 8);
+        int lineX = offsetX + px + (int) (Math.cos(playerAngle) * 12);
+        int lineY = offsetY + py + (int) (Math.sin(playerAngle) * 12);
+        g.drawLine(offsetX + px, offsetY + py, lineX, lineY);
 
-        int exitPx = offset + exitTileX * 16;
-        int exitPy = offset + exitTileY * 16;
-        g.setColor(Color.GREEN);
-        g.fillRect(exitPx + 4, exitPy + 4, 8, 8);
-
-        int startPx = offset + startTileX * 16;
-        int startPy = offset + startTileY * 16;
+        int startPx = offsetX + startTileX * 16;
+        int startPy = offsetY + startTileY * 16;
         g.setColor(Color.BLUE);
         g.fillOval(startPx + 4, startPy + 4, 8, 8);
+
+        g.setColor(Color.MAGENTA);
+        for (Ball ball : balls) {
+            int bx = offsetX + (int) (ball.x / TILE_SIZE * 16);
+            int by = offsetY + (int) (ball.y / TILE_SIZE * 16);
+            g.fillOval(bx - 4, by - 4, 8, 8);
+        }
     }
 
     private class InputAdapter extends KeyAdapter {
@@ -458,13 +645,27 @@ public class GamePanel extends JPanel implements ActionListener {
         final int side;
         final int[][] texture;
 
-        RayHit(double distance, int wallType, int textureX, int side) {
+        RayHit(double distance, int wallType, int textureX, int side, int[][] texture) {
             this.distance = distance;
             this.wallType = wallType;
             this.textureX = textureX;
             this.side = side;
-            this.texture = Textures.STONE;
+            this.texture = texture;
         }
+    }
+
+    private void drawStatus(Graphics g) {
+        int width = getWidth();
+        int statusWidth = 240;
+        int statusHeight = 60;
+        g.setColor(new Color(0, 0, 0, 200));
+        g.fillRect(10, 10, statusWidth, statusHeight);
+        g.setColor(Color.WHITE);
+        g.setFont(g.getFont().deriveFont(16f));
+        String status = "Balls: " + (OBJECTIVE_COUNT - balls.size()) + " / " + OBJECTIVE_COUNT;
+        g.drawString(status, 18, 32);
+        String hint = balls.isEmpty() ? "Now go to the exit." : "Collect all balls first.";
+        g.drawString(hint, 18, 52);
     }
 
     private void drawGameOver(Graphics g) {
@@ -495,6 +696,8 @@ public class GamePanel extends JPanel implements ActionListener {
         static final int[][] BRICK = createBrick();
         static final int[][] WOOD = createWood();
         static final int[][] STONE = createStone();
+        static final int[][] DOOR = createDoor();
+        static final int[][] DOOR_OPEN = createOpenDoor();
         static final int[][] MARBLE = createMarble();
 
         private static int[][] createBrick() {
@@ -546,6 +749,30 @@ public class GamePanel extends JPanel implements ActionListener {
                         base = 0xA8977A;
                     }
                     tex[x][y] = base;
+                }
+            }
+            return tex;
+        }
+
+        private static int[][] createDoor() {
+            int[][] tex = new int[TEX_SIZE][TEX_SIZE];
+            for (int y = 0; y < TEX_SIZE; y++) {
+                for (int x = 0; x < TEX_SIZE; x++) {
+                    int shade = ((x / 8) % 2 == 0) ? 0x755531 : 0x8B6A42;
+                    if (x > 20 && x < 44) {
+                        shade = ((y / 12) % 2 == 0) ? 0x5C3D1B : 0x6F4F28;
+                    }
+                    tex[x][y] = shade;
+                }
+            }
+            return tex;
+        }
+
+        private static int[][] createOpenDoor() {
+            int[][] tex = new int[TEX_SIZE][TEX_SIZE];
+            for (int y = 0; y < TEX_SIZE; y++) {
+                for (int x = 0; x < TEX_SIZE; x++) {
+                    tex[x][y] = 0xFFFFFF;
                 }
             }
             return tex;
