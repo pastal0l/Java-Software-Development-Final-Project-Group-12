@@ -25,7 +25,7 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final int FPS = 60;
     private static final double MOVE_SPEED = 3.5;
     private static final double ROTATE_SPEED = Math.toRadians(3.5);
-    private static final int MAP_SIZE = 20;
+    private static final int MAP_SIZE = 21;
     private static final int TILE_SIZE = 64;
     private static final int TEX_SIZE = 64;
     private static final int OBJECTIVE_COUNT = 3;
@@ -47,7 +47,9 @@ public class GamePanel extends JPanel implements ActionListener {
     private double playerY = startTileY * TILE_SIZE + TILE_SIZE / 2.0;
     private double playerAngle = Math.toRadians(45);
     private boolean moveForward, moveBackward, turnLeft, turnRight, strafeLeft, strafeRight;
+    private static final double PLAYER_COLLISION_RADIUS = 14.0;
     private final Monster monster;
+    private final Door door;
     private static final long START_TIME_MILLIS = 5 * 60 * 1000; // 5 minutes
     private long remainingTimeMillis = START_TIME_MILLIS;
     private double floatPhase = 0;
@@ -63,33 +65,90 @@ public class GamePanel extends JPanel implements ActionListener {
         setFocusable(true);
         addKeyListener(new InputAdapter());
         generateRandomMap();
+        door = new Door(exitTileX, exitTileY);
 
-        monster = new Monster(8, 1, TILE_SIZE);
+        monster = new Monster(9, 1, TILE_SIZE);
         timer = new Timer(1000 / FPS, this);
         spawnBalls(OBJECTIVE_COUNT);
     }
 
     private void generateRandomMap() {
         map = new int[MAP_SIZE][MAP_SIZE];
-        Random random = new Random();
         
+        // 1. Fill the entire map with walls initially
         for (int y = 0; y < MAP_SIZE; y++) {
             for (int x = 0; x < MAP_SIZE; x++) {
-                // Keep the outer borders as solid walls (value 3)
-                if (x == 0 || x == MAP_SIZE - 1 || y == 0 || y == MAP_SIZE - 1) {
-                    map[y][x] = 3; 
-                } else {
-                    // 30% chance to be a wall, 70% chance to be empty space (0)
-                    map[y][x] = random.nextDouble() < 0.30 ? 3 : 0;
+                map[y][x] = 3;
+            }
+        }
+
+        // 2. Recursive Backtracker to generate a guaranteed connected maze
+        boolean[][] visited = new boolean[MAP_SIZE][MAP_SIZE];
+        List<int[]> stack = new ArrayList<>();
+        
+        int startX = 1;
+        int startY = 1;
+        visited[startY][startX] = true;
+        map[startY][startX] = 0;
+        stack.add(new int[]{startX, startY});
+        
+        // Directions: Up, Right, Down, Left (step of 2 to jump over walls)
+        int[] dx = {0, 2, 0, -2};
+        int[] dy = {-2, 0, 2, 0};
+        
+        while (!stack.isEmpty()) {
+            int[] current = stack.get(stack.size() - 1);
+            int cx = current[0];
+            int cy = current[1];
+            
+            // Find unvisited neighbors
+            List<int[]> neighbors = new ArrayList<>();
+            for (int i = 0; i < 4; i++) {
+                int nx = cx + dx[i];
+                int ny = cy + dy[i];
+                // Check bounds: must be within the inner grid (1 to MAP_SIZE - 2)
+                if (nx >= 1 && nx <= MAP_SIZE - 2 && ny >= 1 && ny <= MAP_SIZE - 2 && !visited[ny][nx]) {
+                    neighbors.add(new int[]{nx, ny, i});
+                }
+            }
+            
+            if (!neighbors.isEmpty()) {
+                // Choose a random neighbor
+                int[] chosen = neighbors.get(random.nextInt(neighbors.size()));
+                int nx = chosen[0];
+                int ny = chosen[1];
+                int dir = chosen[2];
+                
+                // Carve the wall between current cell and the chosen neighbor
+                int wx = cx + dx[dir] / 2;
+                int wy = cy + dy[dir] / 2;
+                map[wy][wx] = 0;
+                
+                // Mark neighbor as visited and carve it
+                map[ny][nx] = 0;
+                visited[ny][nx] = true;
+                stack.add(new int[]{nx, ny});
+            } else {
+                // Backtrack if no unvisited neighbors
+                stack.remove(stack.size() - 1);
+            }
+        }
+        
+        // 3. Optional: Remove some additional walls to create loops
+        // This prevents the maze from being a single long winding corridor and makes it feel more natural.
+        for (int y = 1; y < MAP_SIZE - 1; y++) {
+            for (int x = 1; x < MAP_SIZE - 1; x++) {
+                if (map[y][x] == 3 && random.nextDouble() < 0.25) { 
+                    map[y][x] = 0;
                 }
             }
         }
         
-        // Ensure the start and exit positions are always empty
+        // 4. Ensure start and exit are definitely open
         map[startTileY][startTileX] = 0;
         map[exitTileY][exitTileX] = 0;
         
-        // Clear a small area around start and exit to prevent the player from being trapped
+        // Clear a small area around start and exit to guarantee no trapping
         map[startTileY][startTileX + 1] = 0;
         map[startTileY + 1][startTileX] = 0;
         map[exitTileY][exitTileX - 1] = 0;
@@ -194,7 +253,7 @@ public class GamePanel extends JPanel implements ActionListener {
         playerX = startTileX * TILE_SIZE + TILE_SIZE / 2.0;
         playerY = startTileY * TILE_SIZE + TILE_SIZE / 2.0;
         playerAngle = Math.toRadians(45);
-        monster.reset(8, 1);
+        monster.reset(9, 1);
         spawnBalls(OBJECTIVE_COUNT);
         timer.start();
         remainingTimeMillis = START_TIME_MILLIS;
@@ -252,9 +311,23 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     private boolean collides(double x, double y) {
-        int mapX = (int) x / TILE_SIZE;
-        int mapY = (int) y / TILE_SIZE;
-        return isWallTile(mapX, mapY);
+        if (x - PLAYER_COLLISION_RADIUS < 0 || y - PLAYER_COLLISION_RADIUS < 0
+                || x + PLAYER_COLLISION_RADIUS >= MAP_SIZE * TILE_SIZE
+                || y + PLAYER_COLLISION_RADIUS >= MAP_SIZE * TILE_SIZE) {
+            return true;
+        }
+
+        double[] offsets = {-PLAYER_COLLISION_RADIUS, PLAYER_COLLISION_RADIUS};
+        for (double offsetX : offsets) {
+            for (double offsetY : offsets) {
+                int mapX = (int) ((x + offsetX) / TILE_SIZE);
+                int mapY = (int) ((y + offsetY) / TILE_SIZE);
+                if (isWallTile(mapX, mapY)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -280,7 +353,7 @@ public class GamePanel extends JPanel implements ActionListener {
 
     private int getMapTile(int mapX, int mapY) {
         if (door.isAt(mapX, mapY)) {
-            return door.getMapValue();
+            return door.isOpen() ? 0 : door.getMapValue();
         }
         return map[mapY][mapX];
     }
@@ -426,6 +499,9 @@ public class GamePanel extends JPanel implements ActionListener {
             g.fillOval(screenX - spriteSize / 2, spriteY, spriteSize, spriteSize);
             g.setColor(Color.BLACK);
             g.drawOval(screenX - spriteSize / 2, spriteY, spriteSize, spriteSize);
+        }
+    }
+
     private void drawBallSprites(int[] pixels, int width, int height, int horizon, double startAngle, double rayStep, int rayCount, double[] rayDistances) {
         double fov = Math.toRadians(60);
         double projectionPlane = (width / 2.0) / Math.tan(fov / 2.0);
@@ -734,7 +810,7 @@ public class GamePanel extends JPanel implements ActionListener {
         g.setColor(Color.BLUE);
         g.fillOval(startPx + 4, startPy + 4, 8, 8);
 
-        monster.drawOnMinimap(g, offset, 16);
+        monster.drawOnMinimap(g, offsetX, 16);
     }
 
     /**
@@ -753,12 +829,6 @@ public class GamePanel extends JPanel implements ActionListener {
         g.setColor(Color.WHITE);
         g.setFont(g.getFont().deriveFont(16f));
         g.drawString(timerText, width - 208, 32);
-        g.setColor(Color.MAGENTA);
-        for (Ball ball : balls) {
-            int bx = offsetX + (int) (ball.x / TILE_SIZE * 16);
-            int by = offsetY + (int) (ball.y / TILE_SIZE * 16);
-            g.fillOval(bx - 4, by - 4, 8, 8);
-        }
     }
 
     private class InputAdapter extends KeyAdapter {
