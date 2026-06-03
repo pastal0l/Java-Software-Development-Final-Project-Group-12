@@ -202,8 +202,10 @@ public class Monster {
         if (dx == 0 && dy == 0) {
             return false;
         }
-        return !collides(x + dx * WALK_SPEED, y, map, tileSize)
-                && !collides(x, y + dy * WALK_SPEED, map, tileSize);
+        double targetX = x + dx * WALK_SPEED;
+        double targetY = y + dy * WALK_SPEED;
+        return !collides(targetX, y, map, tileSize)
+                && !collides(x, targetY, map, tileSize);
     }
 
     /**
@@ -225,7 +227,9 @@ public class Monster {
             if (nx < 0 || nx >= map[0].length || ny < 0 || ny >= map.length) {
                 continue;
             }
-            if (map[ny][nx] == 0) {
+            double checkX = nx * tileSize + tileSize / 2.0;
+            double checkY = ny * tileSize + tileSize / 2.0;
+            if (!collides(checkX, checkY, map, tileSize)) {
                 if (i != oppositeIndex) {
                     options[count++] = i;
                 }
@@ -239,7 +243,9 @@ public class Monster {
                 if (nx < 0 || nx >= map[0].length || ny < 0 || ny >= map.length) {
                     continue;
                 }
-                if (map[ny][nx] == 0) {
+                double checkX = nx * tileSize + tileSize / 2.0;
+                double checkY = ny * tileSize + tileSize / 2.0;
+                if (!collides(checkX, checkY, map, tileSize)) {
                     options[count++] = i;
                 }
             }
@@ -340,11 +346,11 @@ public class Monster {
     /**
      * Render the monster's marker on the provided minimap.
      */
-    public void drawOnMinimap(Graphics g, int offset, int minimapCellSize) {
+    public void drawOnMinimap(Graphics g, int offsetX, int offsetY, int minimapCellSize) {
         double ratioX = x / tileSize;
         double ratioY = y / tileSize;
-        int px = offset + (int) (ratioX * minimapCellSize);
-        int py = offset + (int) (ratioY * minimapCellSize);
+        int px = offsetX + (int) (ratioX * minimapCellSize);
+        int py = offsetY + (int) (ratioY * minimapCellSize);
 
         g.setColor(BODY_COLOR);
         g.fillOval(px - 6, py - 6, 12, 12);

@@ -12,7 +12,6 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
-import java.util.Random; 
 
 /**
  * GamePanel: main game component handling rendering, input, and updates.
@@ -37,8 +36,10 @@ public class GamePanel extends JPanel implements ActionListener {
 
     private final int startTileX = 1;
     private final int startTileY = 1;
-    private final int exitTileX = MAP_SIZE - 2;
-    private final int exitTileY = MAP_SIZE - 2;
+    private final int exitTileX = MAP_SIZE - 1;
+    private final int exitTileY = MAP_SIZE - 1;
+    private final int monsterStartTileX = 8;
+    private final int monsterStartTileY = 1;
     private boolean levelComplete = false;
     private boolean victoryMusicPlayed = false;
 
@@ -48,6 +49,7 @@ public class GamePanel extends JPanel implements ActionListener {
     private double playerAngle = Math.toRadians(45);
     private boolean moveForward, moveBackward, turnLeft, turnRight, strafeLeft, strafeRight;
     private final Monster monster;
+    private final Door door;
     private static final long START_TIME_MILLIS = 5 * 60 * 1000; // 5 minutes
     private long remainingTimeMillis = START_TIME_MILLIS;
     private double floatPhase = 0;
@@ -63,37 +65,24 @@ public class GamePanel extends JPanel implements ActionListener {
         setFocusable(true);
         addKeyListener(new InputAdapter());
         generateRandomMap();
+        door = new Door(exitTileX, exitTileY);
 
-        monster = new Monster(8, 1, TILE_SIZE);
+        monster = new Monster(monsterStartTileX, monsterStartTileY, TILE_SIZE);
         timer = new Timer(1000 / FPS, this);
         spawnBalls(OBJECTIVE_COUNT);
     }
 
     private void generateRandomMap() {
-        map = new int[MAP_SIZE][MAP_SIZE];
-        Random random = new Random();
-        
-        for (int y = 0; y < MAP_SIZE; y++) {
-            for (int x = 0; x < MAP_SIZE; x++) {
-                // Keep the outer borders as solid walls (value 3)
-                if (x == 0 || x == MAP_SIZE - 1 || y == 0 || y == MAP_SIZE - 1) {
-                    map[y][x] = 3; 
-                } else {
-                    // 30% chance to be a wall, 70% chance to be empty space (0)
-                    map[y][x] = random.nextDouble() < 0.30 ? 3 : 0;
-                }
-            }
-        }
-        
-        // Ensure the start and exit positions are always empty
+        map = MazeGenerator.generateMaze(MAP_SIZE, startTileX, startTileY, exitTileX - 1, exitTileY);
         map[startTileY][startTileX] = 0;
-        map[exitTileY][exitTileX] = 0;
-        
-        // Clear a small area around start and exit to prevent the player from being trapped
         map[startTileY][startTileX + 1] = 0;
         map[startTileY + 1][startTileX] = 0;
         map[exitTileY][exitTileX - 1] = 0;
-        map[exitTileY - 1][exitTileX] = 0;
+
+        map[monsterStartTileY][monsterStartTileX] = 0;
+        map[monsterStartTileY][monsterStartTileX - 1] = 0;
+        map[monsterStartTileY][monsterStartTileX + 1] = 0;
+        map[monsterStartTileY + 1][monsterStartTileX] = 0;
     }
 
     /**
@@ -261,10 +250,7 @@ public class GamePanel extends JPanel implements ActionListener {
      * Check whether the player is on the exit tile and finish the level.
      */
     private void checkExit() {
-        int mapX = (int) playerX / TILE_SIZE;
-        int mapY = (int) playerY / TILE_SIZE;
-
-        if (door.isOpen() && door.isPlayerNear(playerX, playerY, TILE_SIZE)) {
+        if (door.isOpen() && isPlayerTouchingDoor()) {
             levelComplete = true;
             timer.stop();
             if (!victoryMusicPlayed) {
@@ -274,13 +260,19 @@ public class GamePanel extends JPanel implements ActionListener {
         }
     }
 
+    private boolean isPlayerTouchingDoor() {
+        int mapX = (int) playerX / TILE_SIZE;
+        int mapY = (int) playerY / TILE_SIZE;
+        return mapX == exitTileX - 1 && mapY == exitTileY;
+    }
+
     private boolean isExitOpen() {
         return door.isOpen();
     }
 
     private int getMapTile(int mapX, int mapY) {
         if (door.isAt(mapX, mapY)) {
-            return door.getMapValue();
+            return door.isOpen() ? 0 : door.getMapValue();
         }
         return map[mapY][mapX];
     }
@@ -426,6 +418,9 @@ public class GamePanel extends JPanel implements ActionListener {
             g.fillOval(screenX - spriteSize / 2, spriteY, spriteSize, spriteSize);
             g.setColor(Color.BLACK);
             g.drawOval(screenX - spriteSize / 2, spriteY, spriteSize, spriteSize);
+        }
+    }
+
     private void drawBallSprites(int[] pixels, int width, int height, int horizon, double startAngle, double rayStep, int rayCount, double[] rayDistances) {
         double fov = Math.toRadians(60);
         double projectionPlane = (width / 2.0) / Math.tan(fov / 2.0);
@@ -706,6 +701,8 @@ public class GamePanel extends JPanel implements ActionListener {
                     if (isExitOpen()) {
                         g.setColor(Color.WHITE);
                         g.fillRect(offsetX + x * 16, offsetY + y * 16, 16, 16);
+                        g.setColor(Color.GRAY);
+                        g.drawRect(offsetX + x * 16, offsetY + y * 16, 16, 16);
                     } else {
                         g.setColor(new Color(34, 139, 34));
                         g.fillRect(offsetX + x * 16, offsetY + y * 16, 16, 16);
@@ -734,7 +731,14 @@ public class GamePanel extends JPanel implements ActionListener {
         g.setColor(Color.BLUE);
         g.fillOval(startPx + 4, startPy + 4, 8, 8);
 
-        monster.drawOnMinimap(g, offset, 16);
+        g.setColor(Color.YELLOW);
+        for (Ball ball : balls) {
+            int bx = offsetX + (int) (ball.x / TILE_SIZE * 16);
+            int by = offsetY + (int) (ball.y / TILE_SIZE * 16);
+            g.fillOval(bx - 3, by - 3, 6, 6);
+        }
+
+        monster.drawOnMinimap(g, offsetX, offsetY, 16);
     }
 
     /**
@@ -753,12 +757,6 @@ public class GamePanel extends JPanel implements ActionListener {
         g.setColor(Color.WHITE);
         g.setFont(g.getFont().deriveFont(16f));
         g.drawString(timerText, width - 208, 32);
-        g.setColor(Color.MAGENTA);
-        for (Ball ball : balls) {
-            int bx = offsetX + (int) (ball.x / TILE_SIZE * 16);
-            int by = offsetY + (int) (ball.y / TILE_SIZE * 16);
-            g.fillOval(bx - 4, by - 4, 8, 8);
-        }
     }
 
     private class InputAdapter extends KeyAdapter {
