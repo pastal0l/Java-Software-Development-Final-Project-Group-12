@@ -361,8 +361,8 @@ public class GamePanel extends JPanel implements ActionListener {
         }
 
         int horizon = height / 2;
-        int skyColor = (135 << 16) | (206 << 8) | 235;
-        int floorColor = (34 << 16) | (139 << 8) | 34;
+        int skyColor = (18 << 16) | (24 << 8) | 60;    // dark night sky
+        int floorColor = (16 << 16) | (20 << 8) | 32;  // dim ground for nighttime
 
         // Fill sky and floor
         int row = 0;
