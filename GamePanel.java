@@ -315,7 +315,7 @@ public class GamePanel extends JPanel implements ActionListener {
 
     private int getMapTile(int mapX, int mapY) {
         if (door.isAt(mapX, mapY)) {
-            return door.isOpen() ? 0 : door.getMapValue();
+            return door.getMapValue();
         }
         return map[mapY][mapX];
     }
@@ -323,6 +323,9 @@ public class GamePanel extends JPanel implements ActionListener {
     private boolean isWallTile(int mapX, int mapY) {
         if (mapX < 0 || mapX >= MAP_SIZE || mapY < 0 || mapY >= MAP_SIZE) {
             return true;
+        }
+        if (door.isAt(mapX, mapY)) {
+            return !door.isOpen();
         }
         return getMapTile(mapX, mapY) != 0;
     }
@@ -407,8 +410,10 @@ public class GamePanel extends JPanel implements ActionListener {
                     int textureY = (int) (((y - lineOffset) * TEX_SIZE) / (double) lineHeight);
                     textureY = Math.max(0, Math.min(TEX_SIZE - 1, textureY));
                     int color = hit.texture[hit.textureX][textureY];
-                    if (hit.side == 1) color = shadeColor(color, 0.70);
-                    color = shadeColor(color, Math.max(0.20, 1.0 / (1.0 + correctedDistance * correctedDistance * 0.00005)));
+                    if (!(hit.wallType == Door.DOOR_TILE && isExitOpen())) {
+                        if (hit.side == 1) color = shadeColor(color, 0.70);
+                        color = shadeColor(color, Math.max(0.20, 1.0 / (1.0 + correctedDistance * correctedDistance * 0.00005)));
+                    }
                     screenPixels[y * width + base] = color;
                 }
             }
@@ -743,8 +748,6 @@ public class GamePanel extends JPanel implements ActionListener {
                     if (isExitOpen()) {
                         g.setColor(Color.WHITE);
                         g.fillRect(offsetX + x * 16, offsetY + y * 16, 16, 16);
-                        g.setColor(Color.GRAY);
-                        g.drawRect(offsetX + x * 16, offsetY + y * 16, 16, 16);
                     } else {
                         g.setColor(new Color(34, 139, 34));
                         g.fillRect(offsetX + x * 16, offsetY + y * 16, 16, 16);
