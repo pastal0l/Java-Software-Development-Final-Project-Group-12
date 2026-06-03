@@ -137,8 +137,13 @@ public class Monster {
     }
 
     private boolean canMoveDirection(double dx, double dy, int[][] map, int tileSize) {
-        if (dx == 0 && dy == 0) return false;
-        return !collides(x + dx * WALK_SPEED, y, map, tileSize) && !collides(x, y + dy * WALK_SPEED, map, tileSize);
+        if (dx == 0 && dy == 0) {
+            return false;
+        }
+        double targetX = x + dx * WALK_SPEED;
+        double targetY = y + dy * WALK_SPEED;
+        return !collides(targetX, y, map, tileSize)
+                && !collides(x, targetY, map, tileSize);
     }
 
     private void chooseNewDirection(int[][] map, int tileSize) {
@@ -152,15 +157,29 @@ public class Monster {
         for (int i = 0; i < 4; i++) {
             int nx = tileX + dx[i];
             int ny = tileY + dy[i];
-            if (nx < 0 || nx >= map[0].length || ny < 0 || ny >= map.length) continue;
-            if (map[ny][nx] == 0 && i != oppositeIndex) options[count++] = i;
+            if (nx < 0 || nx >= map[0].length || ny < 0 || ny >= map.length) {
+                continue;
+            }
+            double checkX = nx * tileSize + tileSize / 2.0;
+            double checkY = ny * tileSize + tileSize / 2.0;
+            if (!collides(checkX, checkY, map, tileSize)) {
+                if (i != oppositeIndex) {
+                    options[count++] = i;
+                }
+            }
         }
         if (count == 0) {
             for (int i = 0; i < 4; i++) {
                 int nx = tileX + dx[i];
                 int ny = tileY + dy[i];
-                if (nx < 0 || nx >= map[0].length || ny < 0 || ny >= map.length) continue;
-                if (map[ny][nx] == 0) options[count++] = i;
+                if (nx < 0 || nx >= map[0].length || ny < 0 || ny >= map.length) {
+                    continue;
+                }
+                double checkX = nx * tileSize + tileSize / 2.0;
+                double checkY = ny * tileSize + tileSize / 2.0;
+                if (!collides(checkX, checkY, map, tileSize)) {
+                    options[count++] = i;
+                }
             }
         }
         if (count == 0) { directionX = 0; directionY = 0; return; }
@@ -216,6 +235,7 @@ public class Monster {
         double ratioY = y / tileSize;
         int px = offsetX + (int) (ratioX * minimapCellSize);
         int py = offsetY + (int) (ratioY * minimapCellSize);
+
         g.setColor(BODY_COLOR);
         g.fillOval(px - 6, py - 6, 12, 12);
         g.setColor(chasing ? Color.MAGENTA : Color.ORANGE);
