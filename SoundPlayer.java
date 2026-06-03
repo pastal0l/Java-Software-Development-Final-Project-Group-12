@@ -1,5 +1,8 @@
+import java.io.ByteArrayInputStream;
 import javax.sound.sampled.AudioFormat;
+import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
+import javax.sound.sampled.Clip;
 import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.SourceDataLine;
 
@@ -7,42 +10,68 @@ public class SoundPlayer {
     private static final float SAMPLE_RATE = 44100f;
     private static final AudioFormat AUDIO_FORMAT = new AudioFormat(SAMPLE_RATE, 16, 1, true, false);
     private static final byte[] DING_BUFFER = createDingBuffer();
-    private static SourceDataLine dingLine;
+    private static Clip dingClip;
 
     static {
+        initializeClip();
+    }
+
+    private static void initializeClip() {
         try {
-            dingLine = AudioSystem.getSourceDataLine(AUDIO_FORMAT);
-            dingLine.open(AUDIO_FORMAT);
-            dingLine.start();
-        } catch (LineUnavailableException e) {
-            dingLine = null;
+            dingClip = AudioSystem.getClip();
+            try (AudioInputStream stream = new AudioInputStream(
+                    new ByteArrayInputStream(DING_BUFFER), AUDIO_FORMAT, DING_BUFFER.length / 2)) {
+                dingClip.open(stream);
+            }
+        } catch (Exception e) {
+            dingClip = null;
         }
     }
 
     public static void playDing() {
-        if (dingLine != null) {
-            new Thread(() -> {
-                synchronized (dingLine) {
-                    dingLine.write(DING_BUFFER, 0, DING_BUFFER.length);
-                    dingLine.drain();
+        new Thread(() -> {
+            if (dingClip != null) {
+                synchronized (dingClip) {
+                    if (dingClip.isRunning()) {
+                        dingClip.stop();
+                    }
+                    dingClip.setFramePosition(0);
+                    dingClip.start();
                 }
-            }, "SoundPlayer-Ding").start();
-            return;
-        }
-        new Thread(SoundPlayer::playDingTone, "SoundPlayer-Ding").start();
+                return;
+            }
+            playFallbackDing();
+        }, "SoundPlayer-Ding").start();
     }
 
-    private static void playDingTone() {
-        try {
-            try (SourceDataLine line = AudioSystem.getSourceDataLine(AUDIO_FORMAT)) {
-                line.open(AUDIO_FORMAT);
-                line.start();
-
-                line.write(DING_BUFFER, 0, DING_BUFFER.length);
-                line.drain();
-            }
+    private static void playFallbackDing() {
+        try (SourceDataLine line = AudioSystem.getSourceDataLine(AUDIO_FORMAT)) {
+            line.open(AUDIO_FORMAT);
+            line.start();
+            line.write(DING_BUFFER, 0, DING_BUFFER.length);
+            line.drain();
         } catch (LineUnavailableException e) {
             // Sound playback failed; ignore so the game still works.
+        }
+    }
+
+    public static void playVictoryMusic() {
+        new Thread(SoundPlayer::playVictoryFanfare, "SoundPlayer-Victory").start();
+    }
+
+    private static void playVictoryFanfare() {
+        try (SourceDataLine line = AudioSystem.getSourceDataLine(AUDIO_FORMAT)) {
+            line.open(AUDIO_FORMAT);
+            line.start();
+            double[] melody = {523.25, 659.25, 783.99, 1046.50, 783.99, 659.25, 523.25};
+            int[] durations = {220, 220, 220, 360, 220, 220, 360};
+            for (int i = 0; i < melody.length; i++) {
+                byte[] buffer = createToneBuffer(melody[i], durations[i], 0.8);
+                line.write(buffer, 0, buffer.length);
+            }
+            line.drain();
+        } catch (LineUnavailableException e) {
+            // Ignore sound errors so the game still runs.
         }
     }
 
@@ -70,31 +99,6 @@ public class SoundPlayer {
             buffer[2 * i + 1] = (byte) ((sample >> 8) & 0xFF);
         }
         return buffer;
-    }
-
-    public static void playVictoryMusic() {
-        new Thread(SoundPlayer::playVictoryFanfare, "SoundPlayer-Victory").start();
-    }
-
-    private static void playVictoryFanfare() {
-        try {
-            AudioFormat format = new AudioFormat(SAMPLE_RATE, 16, 1, true, false);
-            try (SourceDataLine line = AudioSystem.getSourceDataLine(format)) {
-                line.open(format);
-                line.start();
-
-                double[] melody = {523.25, 659.25, 783.99, 1046.50, 783.99, 659.25, 523.25};
-                int[] durations = {220, 220, 220, 360, 220, 220, 360};
-
-                for (int i = 0; i < melody.length; i++) {
-                    byte[] buffer = createToneBuffer(melody[i], durations[i], 0.8);
-                    line.write(buffer, 0, buffer.length);
-                }
-                line.drain();
-            }
-        } catch (LineUnavailableException e) {
-            // Ignore sound errors so the game still runs.
-        }
     }
 
     private static byte[] createToneBuffer(double frequency, int durationMs, double volume) {
