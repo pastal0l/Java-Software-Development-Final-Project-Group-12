@@ -12,14 +12,15 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
+import java.util.Random; 
 
 public class GamePanel extends JPanel implements ActionListener {
     private static final int WIDTH = 800;
     private static final int HEIGHT = 600;
     private static final int FPS = 60;
-    private static final double MOVE_SPEED = 2.8;
+    private static final double MOVE_SPEED = 3.5;
     private static final double ROTATE_SPEED = Math.toRadians(3.5);
-    private static final int MAP_SIZE = 10;
+    private static final int MAP_SIZE = 20;
     private static final int TILE_SIZE = 64;
     private static final int TEX_SIZE = 64;
     private static final int OBJECTIVE_COUNT = 3;
@@ -27,24 +28,12 @@ public class GamePanel extends JPanel implements ActionListener {
     private final List<Ball> balls = new ArrayList<>();
     private final Random random = new Random();
 
-    private final int[][] map = {
-            {3, 3, 3, 3, 3, 3, 3, 3, 3, 3},
-            {3, 0, 0, 0, 0, 3, 0, 0, 0, 3},
-            {3, 0, 3, 3, 0, 3, 0, 3, 0, 3},
-            {3, 0, 3, 0, 0, 0, 0, 3, 0, 3},
-            {3, 0, 3, 0, 3, 3, 0, 3, 0, 3},
-            {3, 0, 0, 0, 3, 0, 0, 0, 0, 3},
-            {3, 3, 3, 0, 3, 0, 3, 3, 0, 3},
-            {3, 0, 0, 0, 0, 0, 0, 3, 0, 3},
-            {3, 0, 3, 3, 3, 3, 0, 0, 0, 2},
-            {3, 3, 3, 3, 3, 3, 3, 3, 3, 3}
-    };
+    private int[][] map;
 
     private final int startTileX = 1;
     private final int startTileY = 1;
-    private final int exitTileX = 9;
-    private final int exitTileY = 8;
-    private final Door door = new Door(exitTileX, exitTileY);
+    private final int exitTileX = MAP_SIZE - 2;
+    private final int exitTileY = MAP_SIZE - 2;
     private boolean levelComplete = false;
     private boolean victoryMusicPlayed = false;
 
@@ -64,9 +53,37 @@ public class GamePanel extends JPanel implements ActionListener {
         setBackground(Color.BLACK);
         setFocusable(true);
         addKeyListener(new InputAdapter());
+        generateRandomMap();
 
         timer = new Timer(1000 / FPS, this);
         spawnBalls(OBJECTIVE_COUNT);
+    }
+
+    private void generateRandomMap() {
+        map = new int[MAP_SIZE][MAP_SIZE];
+        Random random = new Random();
+        
+        for (int y = 0; y < MAP_SIZE; y++) {
+            for (int x = 0; x < MAP_SIZE; x++) {
+                // Keep the outer borders as solid walls (value 3)
+                if (x == 0 || x == MAP_SIZE - 1 || y == 0 || y == MAP_SIZE - 1) {
+                    map[y][x] = 3; 
+                } else {
+                    // 30% chance to be a wall, 70% chance to be empty space (0)
+                    map[y][x] = random.nextDouble() < 0.30 ? 3 : 0;
+                }
+            }
+        }
+        
+        // Ensure the start and exit positions are always empty
+        map[startTileY][startTileX] = 0;
+        map[exitTileY][exitTileX] = 0;
+        
+        // Clear a small area around start and exit to prevent the player from being trapped
+        map[startTileY][startTileX + 1] = 0;
+        map[startTileY + 1][startTileX] = 0;
+        map[exitTileY][exitTileX - 1] = 0;
+        map[exitTileY - 1][exitTileX] = 0;
     }
 
     public void startGame() {

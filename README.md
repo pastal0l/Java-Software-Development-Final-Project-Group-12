@@ -23,3 +23,7 @@ java -cp src Main
 - A: strafe left
 - D: strafe right
 - Left / Right arrows: rotate
+
+
+##map
+- generateRandomMap() to make the map random
