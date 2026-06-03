@@ -14,15 +14,19 @@ public class SoundPlayer {
     private static final float SAMPLE_RATE = 44100f;
     private static final AudioFormat AUDIO_FORMAT = new AudioFormat(SAMPLE_RATE, 16, 1, true, false);
     private static final File MONSTER_SOUND_FILE = new File("asset/monster sound.wav");
+    private static final File FOOTSTEP_SOUND_FILE = new File("asset/walking sound.wav");
     private static final byte[] DING_BUFFER = createDingBuffer();
     private static Clip dingClip;
     private static Clip monsterClip;
+    private static Clip footstepClip;
     private static FloatControl monsterGainControl;
     private static FloatControl monsterPanControl;
+    private static FloatControl footstepGainControl;
 
     static {
         initializeClip();
         initializeMonsterSound();
+        initializeFootstepSound();
     }
 
     private static void initializeClip() {
@@ -66,6 +70,21 @@ public class SoundPlayer {
 
     public static void playVictoryMusic() {
         new Thread(SoundPlayer::playVictoryFanfare, "SoundPlayer-Victory").start();
+    }
+
+    public static void playFootstep() {
+        if (footstepClip == null) {
+            return;
+        }
+        new Thread(() -> {
+            synchronized (footstepClip) {
+                if (footstepClip.isRunning()) {
+                    footstepClip.stop();
+                }
+                footstepClip.setFramePosition(0);
+                footstepClip.start();
+            }
+        }, "SoundPlayer-Footstep").start();
     }
 
     public static void updateMonsterSound(double pan, double volume) {
@@ -147,6 +166,33 @@ public class SoundPlayer {
             monsterClip = null;
             monsterGainControl = null;
             monsterPanControl = null;
+        }
+    }
+
+    private static void initializeFootstepSound() {
+        if (!FOOTSTEP_SOUND_FILE.exists()) {
+            return;
+        }
+        try (AudioInputStream stream = AudioSystem.getAudioInputStream(FOOTSTEP_SOUND_FILE)) {
+            footstepClip = AudioSystem.getClip();
+            footstepClip.open(stream);
+            if (footstepClip.isControlSupported(FloatControl.Type.MASTER_GAIN)) {
+                footstepGainControl = (FloatControl) footstepClip.getControl(FloatControl.Type.MASTER_GAIN);
+                setFootstepVolume(0.52);
+            }
+        } catch (LineUnavailableException | IOException | UnsupportedAudioFileException e) {
+            footstepClip = null;
+            footstepGainControl = null;
+        }
+    }
+
+    private static void setFootstepVolume(double volume) {
+        if (footstepGainControl != null) {
+            double min = footstepGainControl.getMinimum();
+            double max = footstepGainControl.getMaximum();
+            double gain = volume <= 0.0001 ? min : 20.0 * Math.log10(volume);
+            gain = Math.max(min, Math.min(max, gain));
+            footstepGainControl.setValue((float) gain);
         }
     }
 

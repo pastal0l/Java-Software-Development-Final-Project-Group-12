@@ -56,6 +56,8 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final String[] MENU_OPTIONS = {"Restart", "Quit"};
     private static final long START_TIME_MILLIS = 5 * 60 * 1000; // 5 minutes
     private long remainingTimeMillis = START_TIME_MILLIS;
+    private long lastFootstepTime = 0;
+    private static final int FOOTSTEP_INTERVAL_MS = 220;
     private double floatPhase = 0;
     private final Timer timer;
     // Back-buffer for faster pixel operations
@@ -184,11 +186,22 @@ public class GamePanel extends JPanel implements ActionListener {
         double nextX = playerX + dx;
         double nextY = playerY + dy;
 
+        boolean moved = false;
         if (!collides(nextX, playerY)) {
             playerX = nextX;
+            moved = true;
         }
         if (!collides(playerX, nextY)) {
             playerY = nextY;
+            moved = true;
+        }
+
+        if (moved && (moveForward || moveBackward || strafeLeft || strafeRight)) {
+            long now = System.currentTimeMillis();
+            if (now - lastFootstepTime >= FOOTSTEP_INTERVAL_MS) {
+                SoundPlayer.playFootstep();
+                lastFootstepTime = now;
+            }
         }
 
         monster.update(playerX, playerY, map, TILE_SIZE);
@@ -226,6 +239,7 @@ public class GamePanel extends JPanel implements ActionListener {
         monster.reset(monsterSpawn[0], monsterSpawn[1]);
         spawnBalls(OBJECTIVE_COUNT);
         SoundPlayer.stopMonsterSound();
+        lastFootstepTime = 0;
         timer.start();
         remainingTimeMillis = START_TIME_MILLIS;
     }
