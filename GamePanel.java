@@ -192,11 +192,13 @@ public class GamePanel extends JPanel implements ActionListener {
         }
 
         monster.update(playerX, playerY, map, TILE_SIZE);
+        updateMonsterAudio();
         if (monster.collidesWithPlayer(playerX, playerY, TILE_SIZE)) {
             levelComplete = true;
             gameOverMenu = true;
             victory = false;
             selectedMenuOption = 0;
+            SoundPlayer.stopMonsterSound();
             timer.stop();
             requestFocusInWindow();
             repaint();
@@ -223,9 +225,30 @@ public class GamePanel extends JPanel implements ActionListener {
         int[] monsterSpawn = findEmptyMonsterSpawn();
         monster.reset(monsterSpawn[0], monsterSpawn[1]);
         spawnBalls(OBJECTIVE_COUNT);
+        SoundPlayer.stopMonsterSound();
         timer.start();
         remainingTimeMillis = START_TIME_MILLIS;
     }
+
+    private void updateMonsterAudio() {
+        double mx = monster.getX();
+        double my = monster.getY();
+        double dx = mx - playerX;
+        double dy = my - playerY;
+        double distance = Math.sqrt(dx * dx + dy * dy);
+        double maxDistance = 640.0;
+        double volume = 1.0 - Math.min(distance / maxDistance, 1.0);
+        double angleToMonster = Math.atan2(dy, dx);
+        double relativeAngle = normalizeAngle(angleToMonster - playerAngle);
+        double pan = Math.sin(relativeAngle);
+
+        if (volume <= 0.02 || levelComplete || gameOverMenu) {
+            SoundPlayer.stopMonsterSound();
+        } else {
+            SoundPlayer.updateMonsterSound(pan, volume);
+        }
+    }
+
     // Simple AABB collision check against the map grid
     /**
      * Check whether the provided point collides with a non-zero tile in the map.
