@@ -5,20 +5,40 @@ import javax.sound.sampled.SourceDataLine;
 
 public class SoundPlayer {
     private static final float SAMPLE_RATE = 44100f;
+    private static final AudioFormat AUDIO_FORMAT = new AudioFormat(SAMPLE_RATE, 16, 1, true, false);
+    private static final byte[] DING_BUFFER = createDingBuffer();
+    private static SourceDataLine dingLine;
+
+    static {
+        try {
+            dingLine = AudioSystem.getSourceDataLine(AUDIO_FORMAT);
+            dingLine.open(AUDIO_FORMAT);
+            dingLine.start();
+        } catch (LineUnavailableException e) {
+            dingLine = null;
+        }
+    }
 
     public static void playDing() {
+        if (dingLine != null) {
+            new Thread(() -> {
+                synchronized (dingLine) {
+                    dingLine.write(DING_BUFFER, 0, DING_BUFFER.length);
+                    dingLine.drain();
+                }
+            }, "SoundPlayer-Ding").start();
+            return;
+        }
         new Thread(SoundPlayer::playDingTone, "SoundPlayer-Ding").start();
     }
 
     private static void playDingTone() {
         try {
-            AudioFormat format = new AudioFormat(SAMPLE_RATE, 16, 1, true, false);
-            try (SourceDataLine line = AudioSystem.getSourceDataLine(format)) {
-                line.open(format);
+            try (SourceDataLine line = AudioSystem.getSourceDataLine(AUDIO_FORMAT)) {
+                line.open(AUDIO_FORMAT);
                 line.start();
 
-                byte[] buffer = createDingBuffer();
-                line.write(buffer, 0, buffer.length);
+                line.write(DING_BUFFER, 0, DING_BUFFER.length);
                 line.drain();
             }
         } catch (LineUnavailableException e) {
