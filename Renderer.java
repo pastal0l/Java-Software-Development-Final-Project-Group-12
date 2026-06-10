@@ -244,16 +244,56 @@ class Renderer {
     }
 
     /**
-     * Top-left: diamond progress and hint.
+     * Top-left: diamond progress, hint, and stamina bar.
      */
     private void drawStatus(Graphics g) {
         int collected = game.config.objectiveCount - game.balls.size();
         g.setColor(new Color(0, 0, 0, 200));
-        g.fillRect(10, 10, 250, 60);
+        g.fillRect(10, 10, 250, 90);
         g.setColor(Color.WHITE);
         g.setFont(g.getFont().deriveFont(16f));
         g.drawString("Diamonds: " + collected + " / " + game.config.objectiveCount, 18, 32);
         g.drawString(game.balls.isEmpty() ? "Now go to the exit." : "Collect all diamonds.", 18, 52);
+        drawStaminaBar(g, 18, 62, 230, 14);
+    }
+
+    /**
+     * Draws a horizontal stamina bar at (x, y) with given width/height.
+     * Color: green >50 %, yellow 25–50 %, red <25 %, gray when exhausted.
+     * Shows "RECOVERING" label in red when sprint-locked.
+     */
+    private void drawStaminaBar(Graphics g, int x, int y, int w, int h) {
+        // Background track
+        g.setColor(new Color(50, 50, 50, 220));
+        g.fillRoundRect(x, y, w, h, 6, 6);
+
+        // Filled portion
+        double pct   = game.stamina / GamePanel.MAX_STAMINA;
+        int    fillW = (int) (w * pct);
+        Color  fill;
+        if (game.exhausted) {
+            fill = new Color(100, 100, 100);
+        } else if (pct > 0.50) {
+            fill = new Color(50, 200, 80);
+        } else if (pct > 0.25) {
+            fill = new Color(230, 190, 30);
+        } else {
+            fill = new Color(210, 50, 50);
+        }
+        if (fillW > 0) {
+            g.setColor(fill);
+            g.fillRoundRect(x, y, fillW, h, 6, 6);
+        }
+
+        // Border
+        g.setColor(new Color(180, 180, 180, 180));
+        g.drawRoundRect(x, y, w, h, 6, 6);
+
+        // Label
+        g.setFont(g.getFont().deriveFont(10f));
+        String label = game.exhausted ? "RECOVERING" : "STAMINA";
+        g.setColor(game.exhausted ? new Color(220, 80, 80) : Color.WHITE);
+        g.drawString(label, x + 3, y + h - 2);
     }
 
     /**
@@ -264,7 +304,7 @@ class Renderer {
         int tilePx  = MINIMAP_PX / mapSize;
         int mapPx   = mapSize * tilePx;
         int offsetX = 10;
-        int offsetY = 80;
+        int offsetY = 110;
 
         g.setColor(new Color(0, 0, 0, 160));
         g.fillRect(offsetX - 4, offsetY - 4, mapPx + 8, mapPx + 8);
