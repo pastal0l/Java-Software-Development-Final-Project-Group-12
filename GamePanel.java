@@ -1,47 +1,64 @@
 import javax.swing.JPanel;
 import javax.swing.Timer;
+import java.awt.AWTException;
 import java.awt.Color;
+import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.Graphics;
+import java.awt.Point;
+import java.awt.Robot;
+import java.awt.Toolkit;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
+import java.awt.event.KeyAdapter;
+import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.awt.event.MouseMotionAdapter;
+import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
-import java.awt.event.KeyAdapter;
-import java.awt.event.KeyEvent;
 
 /**
  * GamePanel owns all game state and drives the update loop.
  * Rendering is delegated to {@link Renderer}.
+ *
+ * <p>Turning uses mouse look: horizontal mouse movement rotates the player,
+ * and the cursor is captured (hidden + re-centered via {@link Robot}) during
+ * active gameplay.  The cursor reappears on the game-over menu and when the
+ * window loses focus.</p>
  *
  * Fields use package-private access so Renderer can read them each frame.
  */
 public class GamePanel extends JPanel implements ActionListener {
 
     // -----------------------------------------------------------------------
-    // Constants that never change across levels
+    // Constants — never change across levels
     // -----------------------------------------------------------------------
     static final int    WIDTH     = 800;
     static final int    HEIGHT    = 600;
     static final int    TILE_SIZE = 64;
     static final int    TEX_SIZE  = 64;
 
-    private static final int    FPS                   = 60;
-    private static final double MOVE_SPEED            = 3.5;
-    private static final double SPRINT_SPEED          = 6.5;   // held SHIFT
-    private static final double ROTATE_SPEED          = Math.toRadians(3.5);
-    private static final int    FOOTSTEP_INTERVAL_MS  = 300;
-    private static final int    SPRINT_FOOTSTEP_MS    = 160;   // faster footsteps while sprinting
+    private static final int    FPS                  = 60;
+    private static final double MOVE_SPEED           = 3.5;
+    private static final double SPRINT_SPEED         = 6.5;
+    private static final double ROTATE_SPEED         = Math.toRadians(3.5); // arrow-key fallback
+    private static final double MOUSE_SENSITIVITY    = 0.0025;              // radians per pixel
+    private static final int    FOOTSTEP_INTERVAL_MS = 300;
+    private static final int    SPRINT_FOOTSTEP_MS   = 160;
 
     // -----------------------------------------------------------------------
-    // Fixed spawn positions (same every level)
+    // Fixed spawn positions
     // -----------------------------------------------------------------------
     final int startTileX = 1;
     final int startTileY = 1;
 
     // -----------------------------------------------------------------------
-    // Per-level configuration (package-private — read by Renderer)
+    // Per-level config (package-private — read by Renderer)
     // -----------------------------------------------------------------------
     LevelConfig config;
     int         exitTileX;
@@ -55,7 +72,7 @@ public class GamePanel extends JPanel implements ActionListener {
     double              playerX;
     double              playerY;
     double              playerAngle;
-    boolean             sprinting = false;   // true while SHIFT is held
+    boolean             sprinting = false;
 
     final List<Monster> monsters = new ArrayList<>();
     Door                door;
@@ -71,9 +88,27 @@ public class GamePanel extends JPanel implements ActionListener {
     double              floatPhase = 0;
 
     // -----------------------------------------------------------------------
-    // Private state
+    // Private — movement flags
     // -----------------------------------------------------------------------
-    private boolean moveForward, moveBackward, turnLeft, turnRight, strafeLeft, strafeRight;
+    private boolean moveForward, moveBackward, strafeLeft, strafeRight;
+    private boolean turnLeft, turnRight;  // keyboard fallback (arrow keys)
+
+    // -----------------------------------------------------------------------
+    // Private — mouse look
+    // -----------------------------------------------------------------------
+    /**
+     * Horizontal mouse delta accumulated each frame (radians).
+     * Written by the mouse listener; consumed and reset in applyMovement().
+     */
+    private double  mouseDeltaX  = 0;
+    /** True while Robot is re-centering the cursor — ignore that one event. */
+    private boolean recentering  = false;
+    private Robot   robot;           // null if AWTException during init
+    private Cursor  blankCursor;
+
+    // -----------------------------------------------------------------------
+    // Private — misc
+    // -----------------------------------------------------------------------
     private boolean victoryMusicPlayed = false;
     private long    lastUpdateTime     = System.currentTimeMillis();
     private long    lastFootstepTime   = 0;
@@ -111,6 +146,8 @@ public class GamePanel extends JPanel implements ActionListener {
         remainingTimeMillis = config.timeLimitMillis;
         renderer = new Renderer(this);
         timer    = new Timer(1000 / FPS, this);
+
+        initMouseCapture();
     }
 
     // -----------------------------------------------------------------------
@@ -120,10 +157,99 @@ public class GamePanel extends JPanel implements ActionListener {
     public void startGame() {
         lastUpdateTime = System.currentTimeMillis();
         timer.start();
+        enableMouseCapture();
     }
 
     public void requestFocusForInput() {
         requestFocusInWindow();
+    }
+
+    // -----------------------------------------------------------------------
+    // Mouse capture setup (called once in constructor)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Creates the {@link Robot}, blank cursor, and installs mouse/focus
+     * listeners.  Safe to call before the window is visible.
+     */
+    private void initMouseCapture() {
+        try {
+            robot = new Robot();
+        } catch (AWTException e) {
+            // Robot unavailable — arrow keys remain as the only turning method.
+            robot = null;
+        }
+
+        // Transparent 1×1 cursor used to hide the OS pointer during gameplay
+        BufferedImage cursorImg = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
+        blankCursor = Toolkit.getDefaultToolkit()
+                             .createCustomCursor(cursorImg, new Point(0, 0), "blank");
+
+        // Track horizontal mouse movement for rotation
+        addMouseMotionListener(new MouseMotionAdapter() {
+            @Override public void mouseMoved(MouseEvent e)   { onMouseMoved(e.getX(), e.getY()); }
+            @Override public void mouseDragged(MouseEvent e) { onMouseMoved(e.getX(), e.getY()); }
+        });
+
+        // Hide/show cursor when window focus changes
+        addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusGained(FocusEvent e) {
+                if (!gameOverMenu && !levelComplete) enableMouseCapture();
+            }
+            @Override
+            public void focusLost(FocusEvent e) {
+                disableMouseCapture();
+            }
+        });
+
+        // Click inside the panel to recapture focus (e.g. after alt-tabbing back)
+        addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                requestFocusInWindow();
+            }
+        });
+    }
+
+    /** Hide cursor and start re-centering on each move. */
+    private void enableMouseCapture() {
+        if (!isShowing()) return;
+        setCursor(blankCursor);
+        recenterMouse();
+    }
+
+    /** Restore the default system cursor. */
+    private void disableMouseCapture() {
+        setCursor(Cursor.getDefaultCursor());
+    }
+
+    /**
+     * Move the OS cursor to the panel's centre so it never hits the edge.
+     * Sets {@link #recentering} so the resulting {@code mouseMoved} event
+     * is ignored.
+     */
+    private void recenterMouse() {
+        if (robot == null || !isShowing()) return;
+        try {
+            Point loc = getLocationOnScreen();
+            recentering = true;
+            robot.mouseMove(loc.x + getWidth() / 2, loc.y + getHeight() / 2);
+        } catch (Exception ignored) {}
+    }
+
+    /**
+     * Handle a raw mouse-position event.  Computes the delta from the panel
+     * centre, adds it to {@link #mouseDeltaX}, then re-centres.
+     */
+    private void onMouseMoved(int mouseX, int mouseY) {
+        // Skip the synthetic event that Robot fires after re-centering
+        if (recentering) { recentering = false; return; }
+        if (gameOverMenu || levelComplete) return;
+
+        int dx = mouseX - getWidth()  / 2;
+        mouseDeltaX += dx * MOUSE_SENSITIVITY;
+        recenterMouse();
     }
 
     // -----------------------------------------------------------------------
@@ -166,9 +292,7 @@ public class GamePanel extends JPanel implements ActionListener {
 
         applyMovement();
 
-        for (Monster m : monsters) {
-            m.update(playerX, playerY, map, TILE_SIZE);
-        }
+        for (Monster m : monsters) m.update(playerX, playerY, map, TILE_SIZE);
         updateMonsterAudio();
 
         for (Monster m : monsters) {
@@ -184,15 +308,20 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     private void applyMovement() {
+        // --- Rotation: mouse delta takes priority; arrow keys as fallback ---
+        playerAngle += mouseDeltaX;
+        mouseDeltaX  = 0;
+        if (turnLeft)  playerAngle -= ROTATE_SPEED;
+        if (turnRight) playerAngle += ROTATE_SPEED;
+
+        // --- Translation ---
         double speed = sprinting ? SPRINT_SPEED : MOVE_SPEED;
         double dx = 0, dy = 0;
 
-        if (moveForward)  { dx += Math.cos(playerAngle) * speed;              dy += Math.sin(playerAngle) * speed; }
-        if (moveBackward) { dx -= Math.cos(playerAngle) * speed;              dy -= Math.sin(playerAngle) * speed; }
+        if (moveForward)  { dx += Math.cos(playerAngle) * speed;               dy += Math.sin(playerAngle) * speed; }
+        if (moveBackward) { dx -= Math.cos(playerAngle) * speed;               dy -= Math.sin(playerAngle) * speed; }
         if (strafeLeft)   { dx += Math.cos(playerAngle - Math.PI / 2) * speed; dy += Math.sin(playerAngle - Math.PI / 2) * speed; }
         if (strafeRight)  { dx += Math.cos(playerAngle + Math.PI / 2) * speed; dy += Math.sin(playerAngle + Math.PI / 2) * speed; }
-        if (turnLeft)     playerAngle -= ROTATE_SPEED;
-        if (turnRight)    playerAngle += ROTATE_SPEED;
 
         boolean moved = false;
         if (!collides(playerX + dx, playerY)) { playerX += dx; moved = true; }
@@ -213,26 +342,27 @@ public class GamePanel extends JPanel implements ActionListener {
     // -----------------------------------------------------------------------
 
     private void loadLevel(int index) {
-        currentLevelIndex   = index;
-        config              = LevelConfig.ALL[index];
-        exitTileX           = config.mapSize - 1;
-        exitTileY           = config.mapSize - 1;
+        currentLevelIndex  = index;
+        config             = LevelConfig.ALL[index];
+        exitTileX          = config.mapSize - 1;
+        exitTileY          = config.mapSize - 1;
 
-        levelComplete       = false;
-        gameOverMenu        = false;
-        victory             = false;
-        selectedMenuOption  = 0;
-        victoryMusicPlayed  = false;
-        sprinting           = false;
+        levelComplete      = false;
+        gameOverMenu       = false;
+        victory            = false;
+        selectedMenuOption = 0;
+        victoryMusicPlayed = false;
+        sprinting          = false;
+        mouseDeltaX        = 0;
 
         generateRandomMap();
         door = new Door(exitTileX, exitTileY);
         spawnMonsters(config.monsterCount);
         spawnBalls(config.objectiveCount);
 
-        playerX             = startTileX * TILE_SIZE + TILE_SIZE / 2.0;
-        playerY             = startTileY * TILE_SIZE + TILE_SIZE / 2.0;
-        playerAngle         = Math.toRadians(45);
+        playerX     = startTileX * TILE_SIZE + TILE_SIZE / 2.0;
+        playerY     = startTileY * TILE_SIZE + TILE_SIZE / 2.0;
+        playerAngle = Math.toRadians(45);
 
         SoundPlayer.stopMonsterSound();
         remainingTimeMillis = config.timeLimitMillis;
@@ -243,11 +373,13 @@ public class GamePanel extends JPanel implements ActionListener {
     private void restartGame() {
         loadLevel(currentLevelIndex);
         timer.start();
+        enableMouseCapture();
     }
 
     private void nextLevel() {
         loadLevel(currentLevelIndex + 1);
         timer.start();
+        enableMouseCapture();
     }
 
     // -----------------------------------------------------------------------
@@ -259,6 +391,7 @@ public class GamePanel extends JPanel implements ActionListener {
         gameOverMenu       = true;
         victory            = won;
         selectedMenuOption = 0;
+        mouseDeltaX        = 0;
 
         if (won && !config.isLast()) {
             menuOptions = new String[]{"Next Level", "Restart", "Quit"};
@@ -268,6 +401,7 @@ public class GamePanel extends JPanel implements ActionListener {
             menuOptions = new String[]{"Restart", "Quit"};
         }
 
+        disableMouseCapture();
         timer.stop();
         requestFocusInWindow();
         repaint();
@@ -276,9 +410,8 @@ public class GamePanel extends JPanel implements ActionListener {
     private void updateMonsterAudio() {
         if (monsters.isEmpty()) { SoundPlayer.stopMonsterSound(); return; }
 
-        // Base audio on the closest monster
-        Monster closest  = null;
-        double  minDist  = Double.MAX_VALUE;
+        Monster closest = null;
+        double  minDist = Double.MAX_VALUE;
         for (Monster m : monsters) {
             double d = Math.hypot(m.getX() - playerX, m.getY() - playerY);
             if (d < minDist) { minDist = d; closest = m; }
@@ -300,10 +433,6 @@ public class GamePanel extends JPanel implements ActionListener {
     // Game-object logic
     // -----------------------------------------------------------------------
 
-    /**
-     * Spawn {@code count} monsters at distinct empty tiles, each at least
-     * avoiding the player start, exit tile, and each other.
-     */
     private void spawnMonsters(int count) {
         monsters.clear();
         List<int[]> taken = new ArrayList<>();
@@ -397,10 +526,6 @@ public class GamePanel extends JPanel implements ActionListener {
         return map[y][x] == 0;
     }
 
-    /**
-     * Find an empty tile for a monster, avoiding start, exit, and all
-     * positions already in {@code taken}.
-     */
     private int[] findEmptyMonsterSpawn(List<int[]> taken) {
         int mapSize = config.mapSize;
         int spawnX, spawnY;
@@ -433,7 +558,7 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     // -----------------------------------------------------------------------
-    // Input
+    // Keyboard input
     // -----------------------------------------------------------------------
 
     private class InputAdapter extends KeyAdapter {
@@ -444,7 +569,7 @@ public class GamePanel extends JPanel implements ActionListener {
                 case KeyEvent.VK_S      -> moveBackward = true;
                 case KeyEvent.VK_A      -> strafeLeft   = true;
                 case KeyEvent.VK_D      -> strafeRight  = true;
-                case KeyEvent.VK_LEFT   -> turnLeft     = true;
+                case KeyEvent.VK_LEFT   -> turnLeft     = true;   // fallback if no mouse
                 case KeyEvent.VK_RIGHT  -> turnRight    = true;
                 case KeyEvent.VK_SHIFT  -> sprinting    = true;
                 case KeyEvent.VK_UP    -> { if (gameOverMenu) navigateMenu(-1); }
@@ -479,7 +604,7 @@ public class GamePanel extends JPanel implements ActionListener {
         switch (menuOptions[selectedMenuOption]) {
             case "Next Level"  -> nextLevel();
             case "Restart"     -> restartGame();
-            case "Play Again"  -> { loadLevel(0); timer.start(); }
+            case "Play Again"  -> { loadLevel(0); timer.start(); enableMouseCapture(); }
             case "Quit"        -> System.exit(0);
         }
     }
