@@ -22,6 +22,7 @@ class Renderer {
     private final GamePanel game;
     private BufferedImage   screenBuffer;
     private int[]           screenPixels;
+    private String          localIP = null;
 
     Renderer(GamePanel game) {
         this.game = game;
@@ -36,7 +37,9 @@ class Renderer {
         drawMinimap(g);
         drawHUD(g);
         drawStatus(g);
-        if (game.gameOverMenu) drawGameOverMenu(g);
+        drawIPLabel(g);
+        if (game.paused)       drawPauseMenu(g);
+        else if (game.gameOverMenu) drawGameOverMenu(g);
     }
 
     // -----------------------------------------------------------------------
@@ -393,6 +396,19 @@ class Renderer {
                    offsetX + px + (int) (Math.cos(game.playerAngle) * 10),
                    offsetY + py + (int) (Math.sin(game.playerAngle) * 10));
 
+        // Remote player dot + direction (cyan)
+        RemotePlayer rp = game.remotePlayer;
+        if (rp != null) {
+            int rpx = (int) (rp.x / TILE_SIZE * tilePx);
+            int rpy = (int) (rp.y / TILE_SIZE * tilePx);
+            g.setColor(new Color(0, 220, 255));
+            g.fillOval(offsetX + rpx - 4, offsetY + rpy - 4, 8, 8);
+            g.setColor(new Color(0, 180, 220));
+            g.drawLine(offsetX + rpx, offsetY + rpy,
+                       offsetX + rpx + (int) (Math.cos(rp.angle) * 10),
+                       offsetY + rpy + (int) (Math.sin(rp.angle) * 10));
+        }
+
         // Start tile
         g.setColor(Color.BLUE);
         g.fillOval(offsetX + game.startTileX * tilePx + 2, offsetY + game.startTileY * tilePx + 2, 6, 6);
@@ -430,6 +446,83 @@ class Renderer {
     }
 
     /**
+     * Small IP-address label in the bottom-right corner.
+     */
+    private void drawIPLabel(Graphics g) {
+        if (localIP == null) {
+            try { localIP = java.net.InetAddress.getLocalHost().getHostAddress(); }
+            catch (Exception e) { localIP = "?.?.?.?"; }
+        }
+        int width  = game.getWidth();
+        int height = game.getHeight();
+        String text = "IP: " + localIP;
+        g.setFont(g.getFont().deriveFont(12f));
+        int sw = g.getFontMetrics().stringWidth(text);
+        g.setColor(new Color(0, 0, 0, 130));
+        g.fillRect(width - sw - 20, height - 24, sw + 14, 18);
+        g.setColor(new Color(170, 215, 255, 210));
+        g.drawString(text, width - sw - 13, height - 10);
+    }
+
+    /**
+     * Semi-transparent pause overlay (ESC).  In multiplayer the game keeps
+     * running behind it; in single-player the timer is stopped.
+     */
+    private void drawPauseMenu(Graphics g) {
+        int width  = game.getWidth();
+        int height = game.getHeight();
+
+        g.setColor(new Color(0, 0, 0, 160));
+        g.fillRect(0, 0, width, height);
+
+        int numOpts   = game.pauseMenuOptions.length;
+        int boxWidth  = 360;
+        int boxHeight = 56 + numOpts * 42 + 36;
+        int boxX = width  / 2 - boxWidth  / 2;
+        int boxY = height / 2 - boxHeight / 2;
+
+        g.setColor(new Color(18, 20, 45, 245));
+        g.fillRoundRect(boxX, boxY, boxWidth, boxHeight, 18, 18);
+        g.setColor(new Color(70, 110, 210));
+        g.drawRoundRect(boxX, boxY, boxWidth, boxHeight, 18, 18);
+
+        String title = game.networkClient != null ? "PAUSED" : "PAUSED";
+        g.setFont(g.getFont().deriveFont(Font.BOLD, 30f));
+        g.setColor(Color.WHITE);
+        int tw = g.getFontMetrics().stringWidth(title);
+        g.drawString(title, width / 2 - tw / 2, boxY + 44);
+
+        g.setFont(g.getFont().deriveFont(22f));
+        for (int i = 0; i < numOpts; i++) {
+            String opt = game.pauseMenuOptions[i];
+            int oy = boxY + 68 + i * 42;
+            if (i == game.pauseMenuSelected) {
+                g.setColor(new Color(50, 100, 220));
+                g.fillRoundRect(width / 2 - 130, oy - 27, 260, 34, 10, 10);
+                g.setColor(Color.WHITE);
+            } else {
+                g.setColor(new Color(170, 200, 240));
+            }
+            int ow = g.getFontMetrics().stringWidth(opt);
+            g.drawString(opt, width / 2 - ow / 2, oy);
+        }
+
+        if (game.networkClient != null) {
+            g.setFont(g.getFont().deriveFont(11f));
+            g.setColor(new Color(140, 140, 150));
+            String note = "Game continues in the background (multiplayer)";
+            int nw = g.getFontMetrics().stringWidth(note);
+            g.drawString(note, width / 2 - nw / 2, boxY + boxHeight - 10);
+        } else {
+            g.setFont(g.getFont().deriveFont(12f));
+            g.setColor(new Color(140, 140, 150));
+            String hint = "UP / DOWN + ENTER to choose";
+            int hw = g.getFontMetrics().stringWidth(hint);
+            g.drawString(hint, width / 2 - hw / 2, boxY + boxHeight - 10);
+        }
+    }
+
+    /**
      * Full-screen overlay: level complete / final victory / game over.
      */
     private void drawGameOverMenu(Graphics g) {
@@ -448,7 +541,7 @@ class Renderer {
             subtitle = "Get ready for Level " + (game.config.level + 1) + "...";
         } else {
             title    = "Game Over";
-            subtitle = "You were defeated.";
+            subtitle = game.remotePlayerLeft ? "Other player disconnected." : "You were defeated.";
         }
 
         g.setColor(new Color(0, 0, 0, 200));

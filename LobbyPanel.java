@@ -94,6 +94,13 @@ class LobbyPanel extends JPanel {
         statusLabel.setForeground(new Color(220, 200, 80));
         statusLabel.setFont(new Font(Font.SANS_SERIF, Font.ITALIC, 14));
         add(statusLabel, c);
+
+        // Local IP display
+        c.gridy = 7;
+        String ip = "?.?.?.?";
+        try { ip = java.net.InetAddress.getLocalHost().getHostAddress(); } catch (Exception ignored) {}
+        JLabel ipLabel = styled(new JLabel("Your IP: " + ip), Color.WHITE, Font.BOLD, 15f);
+        add(ipLabel, c);
     }
 
     // -----------------------------------------------------------------------
@@ -149,12 +156,22 @@ class LobbyPanel extends JPanel {
     // -----------------------------------------------------------------------
 
     private void switchToGame(GamePanel panel) {
+        panel.setReturnToMenuAction(this::showLobby);
         frame.getContentPane().removeAll();
         frame.getContentPane().add(panel);
         frame.revalidate();
         frame.repaint();
         panel.requestFocusInWindow();
         panel.startGame();
+    }
+
+    /** Replaces the current content with a fresh lobby panel. */
+    private void showLobby() {
+        LobbyPanel fresh = new LobbyPanel(frame);
+        frame.getContentPane().removeAll();
+        frame.getContentPane().add(fresh);
+        frame.revalidate();
+        frame.repaint();
     }
 
     // -----------------------------------------------------------------------

@@ -37,8 +37,9 @@ class NetworkClient {
 
     volatile long    serverTimeMs;
     volatile boolean serverDoorOpen = false;
-    volatile boolean gameOver       = false;
-    volatile boolean gameWon        = false;
+    volatile boolean gameOver          = false;
+    volatile boolean gameWon           = false;
+    volatile boolean remotePlayerLeft  = false;
 
     /** Per-monster positions and chase flag (length = monsterCount). */
     volatile double[]  monsterX       = new double[0];
@@ -171,6 +172,8 @@ class NetworkClient {
             });
         } else if (line.equals("DOOR_OPEN")) {
             serverDoorOpen = true;
+        } else if (line.startsWith("PLAYER_LEFT:")) {
+            remotePlayerLeft = true;
         } else if (line.startsWith("GAME_OVER:")) {
             gameWon  = line.endsWith(":1");
             gameOver = true;
