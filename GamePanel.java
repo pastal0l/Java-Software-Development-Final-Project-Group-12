@@ -131,26 +131,56 @@ public class GamePanel extends JPanel implements ActionListener {
     private final Timer    timer;
     private final Renderer renderer;
 
+    /** Non-null in multiplayer — drives shared game state from the server. */
+    NetworkClient networkClient = null;
+    /** Non-null in multiplayer — the other player's world position. */
+    RemotePlayer  remotePlayer  = null;
+
     // -----------------------------------------------------------------------
-    // Constructor — boots into Level 1
+    // Constructors
     // -----------------------------------------------------------------------
+
+    /** Single-player: generates a fresh Level-1 maze locally. */
     public GamePanel() {
+        this(null);
+    }
+
+    /**
+     * Shared constructor.  Pass a connected {@link NetworkClient} for online
+     * co-op; pass {@code null} for single-player.
+     */
+    GamePanel(NetworkClient client) {
         setPreferredSize(new Dimension(WIDTH, HEIGHT));
         setOpaque(true);
         setBackground(Color.BLACK);
         setFocusable(true);
         addKeyListener(new InputAdapter());
 
-        random = new Random();
+        random        = new Random();
+        networkClient = client;
 
-        config    = LevelConfig.ALL[0];
-        exitTileX = config.mapSize - 1;
-        exitTileY = config.mapSize - 1;
-
-        generateRandomMap();
-        door = new Door(exitTileX, exitTileY);
-        spawnMonsters(config.monsterCount);
-        spawnBalls(config.objectiveCount);
+        if (client == null) {
+            // ── Single-player ─────────────────────────────────────────────
+            config    = LevelConfig.ALL[0];
+            exitTileX = config.mapSize - 1;
+            exitTileY = config.mapSize - 1;
+            generateRandomMap();
+            door = new Door(exitTileX, exitTileY);
+            spawnMonsters(config.monsterCount);
+            spawnBalls(config.objectiveCount);
+        } else {
+            // ── Multiplayer — map & balls come from the server ─────────────
+            config    = LevelConfig.ALL[client.levelIdx];
+            exitTileX = config.mapSize - 1;
+            exitTileY = config.mapSize - 1;
+            map       = client.serverMap;
+            door      = new Door(exitTileX, exitTileY);
+            spawnMonsters(config.monsterCount);   // positions overridden by server
+            balls.clear();
+            for (double[] bp : client.serverBalls) balls.add(new Ball(bp[0], bp[1]));
+            remotePlayer = new RemotePlayer(
+                "P" + (client.myPlayerId == 0 ? 2 : 1));
+        }
 
         playerX     = startTileX * TILE_SIZE + TILE_SIZE / 2.0;
         playerY     = startTileY * TILE_SIZE + TILE_SIZE / 2.0;
@@ -295,7 +325,13 @@ public class GamePanel extends JPanel implements ActionListener {
 
     private void updatePlayer(long deltaTime) {
         if (levelComplete) return;
+        if (networkClient != null) updateMultiplayer(deltaTime);
+        else                       updateSinglePlayer(deltaTime);
+    }
 
+    // ── Single-player update ────────────────────────────────────────────────
+
+    private void updateSinglePlayer(long deltaTime) {
         remainingTimeMillis -= deltaTime;
         if (remainingTimeMillis <= 0) {
             remainingTimeMillis = 0;
@@ -318,6 +354,57 @@ public class GamePanel extends JPanel implements ActionListener {
 
         collectBalls();
         checkExit();
+    }
+
+    // ── Multiplayer update ─────────────────────────────────────────────────
+
+    private void updateMultiplayer(long deltaTime) {
+        NetworkClient nc = networkClient;
+
+        // 1. Use server-authoritative timer
+        remainingTimeMillis = nc.serverTimeMs;
+
+        // 2. Process diamond-collected events from server
+        int[] diamondCoord;
+        while ((diamondCoord = nc.diamondsTaken.poll()) != null) {
+            final int bx = diamondCoord[0], by = diamondCoord[1];
+            balls.removeIf(b -> (int) b.x == bx && (int) b.y == by);
+            SoundPlayer.playDing();
+            if (balls.isEmpty()) door.open();
+        }
+
+        // 3. Sync door state
+        if (nc.serverDoorOpen && !door.isOpen()) door.open();
+
+        // 4. Override monster positions with server values
+        double[]  mx  = nc.monsterX;
+        double[]  my  = nc.monsterY;
+        boolean[] mch = nc.monsterChasing;
+        for (int i = 0; i < Math.min(monsters.size(), mx.length); i++) {
+            monsters.get(i).setPosition(mx[i], my[i]);
+            monsters.get(i).setChasing(mch[i]);
+        }
+
+        // 5. Sync remote player position
+        if (remotePlayer != null) {
+            remotePlayer.x     = nc.remotePlayerX;
+            remotePlayer.y     = nc.remotePlayerY;
+            remotePlayer.angle = nc.remotePlayerAngle;
+        }
+
+        // 6. Game-over signal from server
+        if (nc.gameOver && !levelComplete) {
+            SoundPlayer.stopMonsterSound();
+            triggerGameOver(nc.gameWon);
+            return;
+        }
+
+        // 7. Local player movement (client-authoritative)
+        applyMovement(deltaTime);
+        updateMonsterAudio();
+
+        // 8. Send position to server
+        nc.sendPosition(playerX, playerY, playerAngle);
     }
 
     private void applyMovement(long deltaTime) {
@@ -426,7 +513,9 @@ public class GamePanel extends JPanel implements ActionListener {
         selectedMenuOption = 0;
         mouseDeltaX        = 0;
 
-        if (won && !config.isLast()) {
+        if (networkClient != null) {
+            menuOptions = new String[]{"Quit"};          // server controls the session
+        } else if (won && !config.isLast()) {
             menuOptions = new String[]{"Next Level", "Restart", "Quit"};
         } else if (won) {
             menuOptions = new String[]{"Play Again", "Quit"};
@@ -608,7 +697,7 @@ public class GamePanel extends JPanel implements ActionListener {
                 case KeyEvent.VK_UP    -> { if (gameOverMenu) navigateMenu(-1); }
                 case KeyEvent.VK_DOWN  -> { if (gameOverMenu) navigateMenu(+1); }
                 case KeyEvent.VK_ENTER -> { if (gameOverMenu) selectMenuOption(); }
-                case KeyEvent.VK_R     -> restartGame();
+                case KeyEvent.VK_R     -> { if (networkClient == null) restartGame(); }
             }
         }
 

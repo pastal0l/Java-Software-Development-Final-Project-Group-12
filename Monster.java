@@ -302,8 +302,13 @@ public class Monster {
     }
 
     public boolean isChasing() { return chasing; }
-    public double getX() { return x; }
-    public double getY() { return y; }
+    public double  getX()      { return x; }
+    public double  getY()      { return y; }
+
+    /** Override world position — used in multiplayer where the server drives AI. */
+    public void setPosition(double x, double y) { this.x = x; this.y = y; }
+    /** Override chase flag — used in multiplayer rendering. */
+    public void setChasing(boolean chasing)      { this.chasing = chasing; }
 
     public void drawOnMinimap(Graphics g, int offsetX, int offsetY, int minimapCellSize) {
         double ratioX = x / tileSize;

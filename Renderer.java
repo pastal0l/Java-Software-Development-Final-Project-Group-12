@@ -1,4 +1,5 @@
 import java.awt.Color;
+import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
@@ -109,6 +110,7 @@ class Renderer {
 
         g.drawImage(screenBuffer, 0, 0, null);
         drawAllMonsterSprites(g, width, height);
+        drawRemotePlayerSprite(g, width, height);
     }
 
     // -----------------------------------------------------------------------
@@ -153,6 +155,68 @@ class Renderer {
             g.fillOval(screenX - spriteSize / 2, spriteY, spriteSize, spriteSize);
             g.setColor(Color.BLACK);
             g.drawOval(screenX - spriteSize / 2, spriteY, spriteSize, spriteSize);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Remote co-op player sprite
+    // -----------------------------------------------------------------------
+
+    /**
+     * Draws the remote player as a cyan humanoid silhouette in the 3-D view.
+     * Uses the same perspective projection as the monster sprites but with a
+     * distinct colour so the two players can tell each other apart.
+     */
+    private void drawRemotePlayerSprite(Graphics g, int width, int height) {
+        RemotePlayer rp = game.remotePlayer;
+        if (rp == null) return;
+
+        double dx       = rp.x - game.playerX;
+        double dy       = rp.y - game.playerY;
+        double distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance < 1.0) return;
+
+        double angleTo  = Math.atan2(dy, dx);
+        double relAngle = normalizeAngle(angleTo - game.playerAngle);
+        double fov      = Math.toRadians(60);
+        if (Math.abs(relAngle) > fov / 2) return;
+
+        // Wall occlusion: don't draw through walls
+        if (castRayDistance(game.playerAngle + relAngle) + 1.0 < distance) return;
+
+        int screenX    = (int) (((relAngle / (fov / 2)) * 0.5 + 0.5) * width);
+        int spriteH    = Math.max(16, Math.min((int) ((TILE_SIZE * height) / distance * 0.9), 140));
+        int centerY    = height / 2;
+        int alpha      = (int) Math.min(255, 200 * (1.0 - distance / 1200.0));
+        if (alpha <= 10) return;
+
+        // ── Head ──────────────────────────────────────────────────────────
+        int headR  = Math.max(4, spriteH / 6);
+        int headCY = centerY - spriteH / 2 + headR;
+        g.setColor(new Color(0, 210, 255, alpha));
+        g.fillOval(screenX - headR, headCY - headR, headR * 2, headR * 2);
+
+        // ── Torso ──────────────────────────────────────────────────────────
+        int torsoW = Math.max(4, spriteH / 5);
+        int torsoH = spriteH / 3;
+        int torsoY = headCY + headR + 2;
+        g.setColor(new Color(0, 160, 200, alpha));
+        g.fillRect(screenX - torsoW / 2, torsoY, torsoW, torsoH);
+
+        // ── Legs ───────────────────────────────────────────────────────────
+        int legW = Math.max(2, torsoW / 3);
+        int legH = spriteH / 4;
+        int legY = torsoY + torsoH + 1;
+        g.setColor(new Color(0, 120, 160, alpha));
+        g.fillRect(screenX - torsoW / 2,         legY, legW, legH);   // left
+        g.fillRect(screenX + torsoW / 2 - legW,  legY, legW, legH);   // right
+
+        // ── Name label ─────────────────────────────────────────────────────
+        if (distance < 500 && spriteH > 30) {
+            g.setFont(g.getFont().deriveFont(Font.BOLD, 11f));
+            g.setColor(new Color(200, 240, 255, alpha));
+            int lw = g.getFontMetrics().stringWidth(rp.label);
+            g.drawString(rp.label, screenX - lw / 2, headCY - headR - 3);
         }
     }
 
