@@ -1,26 +1,27 @@
 import javax.swing.JFrame;
+import javax.swing.SwingUtilities;
 
 /**
  * Main: entry point for the Pseudo-3D Raycaster game.
- * Creates the window, initializes the game panel and starts the game loop.
+ *
+ * <p>Shows a lobby screen where the player can choose single-player,
+ * host an online co-op game, or join one via IP address.</p>
  */
 public class Main {
-    /**
-     * Application entry point. Creates the main window and starts the game.
-     */
     public static void main(String[] args) {
-        JFrame frame = new JFrame("Pseudo-3D Raycaster");
-        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        frame.setResizable(true);
+        SwingUtilities.invokeLater(() -> {
+            JFrame frame = new JFrame("3D Maze Raycaster");
+            frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+            frame.setResizable(true);
 
-        GamePanel panel = new GamePanel();
-        frame.add(panel);
-        frame.pack();
-        java.awt.Dimension screenSize = java.awt.Toolkit.getDefaultToolkit().getScreenSize();
-        frame.setSize(screenSize);
-        frame.setLocationRelativeTo(null);
-        frame.setVisible(true);
-        panel.requestFocusForInput();
-        panel.startGame();
+            LobbyPanel lobby = new LobbyPanel(frame);
+            frame.add(lobby);
+            frame.pack();
+            java.awt.Dimension screenSize =
+                java.awt.Toolkit.getDefaultToolkit().getScreenSize();
+            frame.setSize(screenSize);
+            frame.setLocationRelativeTo(null);
+            frame.setVisible(true);
+        });
     }
 }
