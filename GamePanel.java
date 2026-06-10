@@ -3,8 +3,6 @@ import javax.swing.Timer;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics;
-import java.awt.image.BufferedImage;
-import java.awt.image.DataBufferInt;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -14,256 +12,282 @@ import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 
 /**
- * GamePanel: main game component handling rendering, input, and updates.
- * Implements the raycasting renderer, HUD/minimap, player movement,
- * and updates the `Monster` AI and game state.
+ * GamePanel owns all game state and drives the update loop.
+ * Rendering is delegated to {@link Renderer}.
+ *
+ * Fields use package-private access so Renderer can read them each frame.
  */
 public class GamePanel extends JPanel implements ActionListener {
-    private static final int WIDTH = 800;
-    private static final int HEIGHT = 600;
-    private static final int FPS = 60;
-    private static final double MOVE_SPEED = 3.5;
-    private static final double ROTATE_SPEED = Math.toRadians(3.5);
-    private static final int MAP_SIZE = 20;
-    private static final int TILE_SIZE = 64;
-    private static final int TEX_SIZE = 64;
-    private static final int OBJECTIVE_COUNT = 3;
 
-    private final List<Ball> balls = new ArrayList<>();
-    private final Random random = new Random();
+    // -----------------------------------------------------------------------
+    // Constants that never change across levels
+    // -----------------------------------------------------------------------
+    static final int    WIDTH     = 800;
+    static final int    HEIGHT    = 600;
+    static final int    TILE_SIZE = 64;
+    static final int    TEX_SIZE  = 64;
 
-    private int[][] map;
+    private static final int    FPS                   = 60;
+    private static final double MOVE_SPEED            = 3.5;
+    private static final double SPRINT_SPEED          = 6.5;   // held SHIFT
+    private static final double ROTATE_SPEED          = Math.toRadians(3.5);
+    private static final int    FOOTSTEP_INTERVAL_MS  = 300;
+    private static final int    SPRINT_FOOTSTEP_MS    = 160;   // faster footsteps while sprinting
 
-    private final int startTileX = 1;
-    private final int startTileY = 1;
-    private final int exitTileX = MAP_SIZE - 1;
-    private final int exitTileY = MAP_SIZE - 1;
-    private final int monsterStartTileX = 8;
-    private final int monsterStartTileY = 1;
-    private boolean levelComplete = false;
-    private boolean victoryMusicPlayed = false;
+    // -----------------------------------------------------------------------
+    // Fixed spawn positions (same every level)
+    // -----------------------------------------------------------------------
+    final int startTileX = 1;
+    final int startTileY = 1;
 
-    // initialize start position and angle
-    private double playerX = startTileX * TILE_SIZE + TILE_SIZE / 2.0;
-    private double playerY = startTileY * TILE_SIZE + TILE_SIZE / 2.0;
-    private double playerAngle = Math.toRadians(45);
+    // -----------------------------------------------------------------------
+    // Per-level configuration (package-private — read by Renderer)
+    // -----------------------------------------------------------------------
+    LevelConfig config;
+    int         exitTileX;
+    int         exitTileY;
+
+    // -----------------------------------------------------------------------
+    // Game state (package-private — read by Renderer each frame)
+    // -----------------------------------------------------------------------
+    int[][]             map;
+
+    double              playerX;
+    double              playerY;
+    double              playerAngle;
+    boolean             sprinting = false;   // true while SHIFT is held
+
+    final List<Monster> monsters = new ArrayList<>();
+    Door                door;
+    final List<Ball>    balls    = new ArrayList<>();
+
+    boolean             gameOverMenu       = false;
+    boolean             victory            = false;
+    boolean             levelComplete      = false;
+    int                 selectedMenuOption = 0;
+    String[]            menuOptions        = {"Restart", "Quit"};
+
+    long                remainingTimeMillis;
+    double              floatPhase = 0;
+
+    // -----------------------------------------------------------------------
+    // Private state
+    // -----------------------------------------------------------------------
     private boolean moveForward, moveBackward, turnLeft, turnRight, strafeLeft, strafeRight;
-    private final Monster monster;
-    private Door door;
-    private boolean gameOverMenu = false;
-    private boolean victory = false;
-    private int selectedMenuOption = 0;
-    private static final String[] MENU_OPTIONS = {"Restart", "Quit"};
-    private static final long START_TIME_MILLIS = 5 * 60 * 1000; // 5 minutes
-    private long remainingTimeMillis = START_TIME_MILLIS;
-    private long lastUpdateTime = System.currentTimeMillis();
-    private long lastFootstepTime = 0;
-    private static final int FOOTSTEP_INTERVAL_MS = 300;
-    private double floatPhase = 0;
-    private final Timer timer;
-    // Back-buffer for faster pixel operations
-    private BufferedImage screenBuffer;
-    private int[] screenPixels;
+    private boolean victoryMusicPlayed = false;
+    private long    lastUpdateTime     = System.currentTimeMillis();
+    private long    lastFootstepTime   = 0;
+    private int     currentLevelIndex  = 0;
 
+    private final Random   random;
+    private final Timer    timer;
+    private final Renderer renderer;
+
+    // -----------------------------------------------------------------------
+    // Constructor — boots into Level 1
+    // -----------------------------------------------------------------------
     public GamePanel() {
         setPreferredSize(new Dimension(WIDTH, HEIGHT));
         setOpaque(true);
         setBackground(Color.BLACK);
         setFocusable(true);
         addKeyListener(new InputAdapter());
+
+        random = new Random();
+
+        config    = LevelConfig.ALL[0];
+        exitTileX = config.mapSize - 1;
+        exitTileY = config.mapSize - 1;
+
         generateRandomMap();
-        // place a door at the exit tile
         door = new Door(exitTileX, exitTileY);
-        int[] monsterSpawn = findEmptyMonsterSpawn();
-        monster = new Monster(monsterSpawn[0], monsterSpawn[1], TILE_SIZE);
-        timer = new Timer(1000 / FPS, this);
-        spawnBalls(OBJECTIVE_COUNT);
+        spawnMonsters(config.monsterCount);
+        spawnBalls(config.objectiveCount);
+
+        playerX     = startTileX * TILE_SIZE + TILE_SIZE / 2.0;
+        playerY     = startTileY * TILE_SIZE + TILE_SIZE / 2.0;
+        playerAngle = Math.toRadians(45);
+
+        remainingTimeMillis = config.timeLimitMillis;
+        renderer = new Renderer(this);
+        timer    = new Timer(1000 / FPS, this);
     }
 
-    private void generateRandomMap() {
-        map = MazeGenerator.generateMaze(MAP_SIZE, startTileX, startTileY, exitTileX - 1, exitTileY);
-        map[startTileY][startTileX] = 0;
-        map[startTileY][startTileX + 1] = 0;
-        map[startTileY + 1][startTileX] = 0;
-        map[exitTileY][exitTileX - 1] = 0;
+    // -----------------------------------------------------------------------
+    // Public API
+    // -----------------------------------------------------------------------
 
-        map[monsterStartTileY][monsterStartTileX] = 0;
-        map[monsterStartTileY][monsterStartTileX - 1] = 0;
-        map[monsterStartTileY][monsterStartTileX + 1] = 0;
-        map[monsterStartTileY + 1][monsterStartTileX] = 0;
-    }
-
-    private int[] findEmptyMonsterSpawn() {
-        int spawnX;
-        int spawnY;
-        do {
-            spawnX = 1 + random.nextInt(MAP_SIZE - 2);
-            spawnY = 1 + random.nextInt(MAP_SIZE - 2);
-        } while (!isEmptyTile(spawnX, spawnY) || (spawnX == startTileX && spawnY == startTileY) || (spawnX == exitTileX && spawnY == exitTileY));
-        return new int[] {spawnX, spawnY};
-    }
-
-    private boolean isEmptyTile(int x, int y) {
-        if (x < 0 || x >= MAP_SIZE || y < 0 || y >= MAP_SIZE) {
-            return false;
-        }
-        return map[y][x] == 0;
-    }
-
-    /**
-     * Start the main game timer which drives updates and repainting.
-     */
     public void startGame() {
         lastUpdateTime = System.currentTimeMillis();
         timer.start();
     }
 
-    /**
-     * Request keyboard focus for this panel so input events are received.
-     */
     public void requestFocusForInput() {
         requestFocusInWindow();
     }
 
+    // -----------------------------------------------------------------------
+    // Game loop
+    // -----------------------------------------------------------------------
+
     @Override
-    /**
-     * Timer callback invoked every frame. Updates game state and requests repaint.
-     */
     public void actionPerformed(ActionEvent e) {
-        long now = System.currentTimeMillis();
-        long deltaTime = now - lastUpdateTime;
-        if (deltaTime <= 0) {
-            deltaTime = 1;
-        }
+        long now       = System.currentTimeMillis();
+        long deltaTime = Math.max(1, now - lastUpdateTime);
         lastUpdateTime = now;
         updatePlayer(deltaTime);
         floatPhase += 0.08;
         repaint();
     }
 
-    /**
-     * Update player movement, handle collisions, update monster and check game state.
-     */
-    private void updatePlayer(long deltaTime) {
-        if (levelComplete) {
-            return;
-        }
+    // -----------------------------------------------------------------------
+    // Rendering (delegated)
+    // -----------------------------------------------------------------------
 
-        // Decrease remaining time using actual elapsed time so the countdown stays accurate.
+    @Override
+    protected void paintComponent(Graphics g) {
+        super.paintComponent(g);
+        renderer.render(g);
+    }
+
+    // -----------------------------------------------------------------------
+    // Update logic
+    // -----------------------------------------------------------------------
+
+    private void updatePlayer(long deltaTime) {
+        if (levelComplete) return;
+
         remainingTimeMillis -= deltaTime;
         if (remainingTimeMillis <= 0) {
             remainingTimeMillis = 0;
-            levelComplete = true;
-            gameOverMenu = true;
-            victory = false;
-            selectedMenuOption = 0;
-            timer.stop();
-            // Ensure the panel has focus to receive menu keys and show the overlay
-            requestFocusInWindow();
-            repaint();
+            triggerGameOver(false);
             return;
         }
 
-        double dx = 0;
-        double dy = 0;
+        applyMovement();
 
-        if (moveForward) {
-            // Move in the direction the player is facing
-            dx += Math.cos(playerAngle) * MOVE_SPEED;
-            dy += Math.sin(playerAngle) * MOVE_SPEED;
+        for (Monster m : monsters) {
+            m.update(playerX, playerY, map, TILE_SIZE);
         }
-        if (moveBackward) {
-            dx -= Math.cos(playerAngle) * MOVE_SPEED;
-            dy -= Math.sin(playerAngle) * MOVE_SPEED;
-        }
-        if (strafeLeft) {
-            dx += Math.cos(playerAngle - Math.PI / 2) * MOVE_SPEED;
-            dy += Math.sin(playerAngle - Math.PI / 2) * MOVE_SPEED;
-        }
-        if (strafeRight) {
-            dx += Math.cos(playerAngle + Math.PI / 2) * MOVE_SPEED;
-            dy += Math.sin(playerAngle + Math.PI / 2) * MOVE_SPEED;
-        }
-        if (turnLeft) {
-            playerAngle -= ROTATE_SPEED;
-        }
-        if (turnRight) {
-            playerAngle += ROTATE_SPEED;
-        }
-
-        double nextX = playerX + dx;
-        double nextY = playerY + dy;
-
-        boolean moved = false;
-        if (!collides(nextX, playerY)) {
-            playerX = nextX;
-            moved = true;
-        }
-        if (!collides(playerX, nextY)) {
-            playerY = nextY;
-            moved = true;
-        }
-
-        if (moved && (moveForward || moveBackward || strafeLeft || strafeRight)) {
-            long now = System.currentTimeMillis();
-            if (now - lastFootstepTime >= FOOTSTEP_INTERVAL_MS) {
-                SoundPlayer.playFootstep();
-                lastFootstepTime = now;
-            }
-        }
-
-        monster.update(playerX, playerY, map, TILE_SIZE);
         updateMonsterAudio();
-        if (monster.collidesWithPlayer(playerX, playerY, TILE_SIZE)) {
-            levelComplete = true;
-            gameOverMenu = true;
-            victory = false;
-            selectedMenuOption = 0;
-            SoundPlayer.stopMonsterSound();
-            timer.stop();
-            requestFocusInWindow();
-            repaint();
-            return;
+
+        for (Monster m : monsters) {
+            if (m.collidesWithPlayer(playerX, playerY, TILE_SIZE)) {
+                SoundPlayer.stopMonsterSound();
+                triggerGameOver(false);
+                return;
+            }
         }
 
         collectBalls();
         checkExit();
     }
 
-    /**
-     * Reset player and monster state and restart the timer for a new run.
-     */
-    private void restartGame() {
-        levelComplete = false;
-        gameOverMenu = false;
-        victory = false;
-        selectedMenuOption = 0;
-        victoryMusicPlayed = false;
-        door.close();
-        playerX = startTileX * TILE_SIZE + TILE_SIZE / 2.0;
-        playerY = startTileY * TILE_SIZE + TILE_SIZE / 2.0;
-        playerAngle = Math.toRadians(45);
-        int[] monsterSpawn = findEmptyMonsterSpawn();
-        monster.reset(monsterSpawn[0], monsterSpawn[1]);
-        spawnBalls(OBJECTIVE_COUNT);
+    private void applyMovement() {
+        double speed = sprinting ? SPRINT_SPEED : MOVE_SPEED;
+        double dx = 0, dy = 0;
+
+        if (moveForward)  { dx += Math.cos(playerAngle) * speed;              dy += Math.sin(playerAngle) * speed; }
+        if (moveBackward) { dx -= Math.cos(playerAngle) * speed;              dy -= Math.sin(playerAngle) * speed; }
+        if (strafeLeft)   { dx += Math.cos(playerAngle - Math.PI / 2) * speed; dy += Math.sin(playerAngle - Math.PI / 2) * speed; }
+        if (strafeRight)  { dx += Math.cos(playerAngle + Math.PI / 2) * speed; dy += Math.sin(playerAngle + Math.PI / 2) * speed; }
+        if (turnLeft)     playerAngle -= ROTATE_SPEED;
+        if (turnRight)    playerAngle += ROTATE_SPEED;
+
+        boolean moved = false;
+        if (!collides(playerX + dx, playerY)) { playerX += dx; moved = true; }
+        if (!collides(playerX, playerY + dy)) { playerY += dy; moved = true; }
+
+        if (moved && (moveForward || moveBackward || strafeLeft || strafeRight)) {
+            long now      = System.currentTimeMillis();
+            int  interval = sprinting ? SPRINT_FOOTSTEP_MS : FOOTSTEP_INTERVAL_MS;
+            if (now - lastFootstepTime >= interval) {
+                SoundPlayer.playFootstep();
+                lastFootstepTime = now;
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Level progression
+    // -----------------------------------------------------------------------
+
+    private void loadLevel(int index) {
+        currentLevelIndex   = index;
+        config              = LevelConfig.ALL[index];
+        exitTileX           = config.mapSize - 1;
+        exitTileY           = config.mapSize - 1;
+
+        levelComplete       = false;
+        gameOverMenu        = false;
+        victory             = false;
+        selectedMenuOption  = 0;
+        victoryMusicPlayed  = false;
+        sprinting           = false;
+
+        generateRandomMap();
+        door = new Door(exitTileX, exitTileY);
+        spawnMonsters(config.monsterCount);
+        spawnBalls(config.objectiveCount);
+
+        playerX             = startTileX * TILE_SIZE + TILE_SIZE / 2.0;
+        playerY             = startTileY * TILE_SIZE + TILE_SIZE / 2.0;
+        playerAngle         = Math.toRadians(45);
+
         SoundPlayer.stopMonsterSound();
-        lastFootstepTime = 0;
-        lastUpdateTime = System.currentTimeMillis();
+        remainingTimeMillis = config.timeLimitMillis;
+        lastFootstepTime    = 0;
+        lastUpdateTime      = System.currentTimeMillis();
+    }
+
+    private void restartGame() {
+        loadLevel(currentLevelIndex);
         timer.start();
-        remainingTimeMillis = START_TIME_MILLIS;
+    }
+
+    private void nextLevel() {
+        loadLevel(currentLevelIndex + 1);
+        timer.start();
+    }
+
+    // -----------------------------------------------------------------------
+    // Game-state triggers
+    // -----------------------------------------------------------------------
+
+    private void triggerGameOver(boolean won) {
+        levelComplete      = true;
+        gameOverMenu       = true;
+        victory            = won;
+        selectedMenuOption = 0;
+
+        if (won && !config.isLast()) {
+            menuOptions = new String[]{"Next Level", "Restart", "Quit"};
+        } else if (won) {
+            menuOptions = new String[]{"Play Again", "Quit"};
+        } else {
+            menuOptions = new String[]{"Restart", "Quit"};
+        }
+
+        timer.stop();
+        requestFocusInWindow();
+        repaint();
     }
 
     private void updateMonsterAudio() {
-        double mx = monster.getX();
-        double my = monster.getY();
-        double dx = mx - playerX;
-        double dy = my - playerY;
-        double distance = Math.sqrt(dx * dx + dy * dy);
-        double maxDistance = 640.0;
-        double volume = 1.0 - Math.min(distance / maxDistance, 1.0);
-        double angleToMonster = Math.atan2(dy, dx);
-        double relativeAngle = normalizeAngle(angleToMonster - playerAngle);
-        double pan = Math.sin(relativeAngle);
+        if (monsters.isEmpty()) { SoundPlayer.stopMonsterSound(); return; }
+
+        // Base audio on the closest monster
+        Monster closest  = null;
+        double  minDist  = Double.MAX_VALUE;
+        for (Monster m : monsters) {
+            double d = Math.hypot(m.getX() - playerX, m.getY() - playerY);
+            if (d < minDist) { minDist = d; closest = m; }
+        }
+
+        double dx     = closest.getX() - playerX;
+        double dy     = closest.getY() - playerY;
+        double volume = 1.0 - Math.min(minDist / 640.0, 1.0);
+        double pan    = Math.sin(normalizeAngle(Math.atan2(dy, dx) - playerAngle));
 
         if (volume <= 0.02 || levelComplete || gameOverMenu) {
             SoundPlayer.stopMonsterSound();
@@ -272,45 +296,47 @@ public class GamePanel extends JPanel implements ActionListener {
         }
     }
 
-    // Simple AABB collision check against the map grid
+    // -----------------------------------------------------------------------
+    // Game-object logic
+    // -----------------------------------------------------------------------
+
     /**
-     * Check whether the provided point collides with a non-zero tile in the map.
+     * Spawn {@code count} monsters at distinct empty tiles, each at least
+     * avoiding the player start, exit tile, and each other.
      */
+    private void spawnMonsters(int count) {
+        monsters.clear();
+        List<int[]> taken = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            int[] pos = findEmptyMonsterSpawn(taken);
+            taken.add(pos);
+            monsters.add(new Monster(pos[0], pos[1], TILE_SIZE));
+        }
+    }
 
     private void spawnBalls(int count) {
+        int mapSize = config.mapSize;
         balls.clear();
         while (balls.size() < count) {
-            int tileX = 1 + random.nextInt(MAP_SIZE - 2);
-            int tileY = 1 + random.nextInt(MAP_SIZE - 2);
-            if (map[tileY][tileX] != 0) {
-                continue;
-            }
-            if ((tileX == startTileX && tileY == startTileY) || (tileX == exitTileX && tileY == exitTileY)) {
-                continue;
-            }
-            boolean exists = false;
-            for (Ball ball : balls) {
-                if ((int) (ball.x / TILE_SIZE) == tileX && (int) (ball.y / TILE_SIZE) == tileY) {
-                    exists = true;
-                    break;
-                }
-            }
-            if (exists) {
-                continue;
-            }
-            double x = tileX * TILE_SIZE + TILE_SIZE / 2.0;
-            double y = tileY * TILE_SIZE + TILE_SIZE / 2.0;
-            balls.add(new Ball(x, y));
+            int tileX = 1 + random.nextInt(mapSize - 2);
+            int tileY = 1 + random.nextInt(mapSize - 2);
+            if (map[tileY][tileX] != 0) continue;
+            if ((tileX == startTileX && tileY == startTileY)
+                    || (tileX == exitTileX && tileY == exitTileY)) continue;
+            boolean occupied = balls.stream().anyMatch(
+                    b -> (int) (b.x / TILE_SIZE) == tileX && (int) (b.y / TILE_SIZE) == tileY);
+            if (occupied) continue;
+            balls.add(new Ball(tileX * TILE_SIZE + TILE_SIZE / 2.0,
+                               tileY * TILE_SIZE + TILE_SIZE / 2.0));
         }
     }
 
     private void collectBalls() {
-        double pickupRadius = 18;
-        boolean collected = false;
+        double  pickupRadius = 18;
+        boolean collected    = false;
         for (int i = balls.size() - 1; i >= 0; i--) {
-            Ball ball = balls.get(i);
-            double dx = playerX - ball.x;
-            double dy = playerY - ball.y;
+            Ball b  = balls.get(i);
+            double dx = playerX - b.x, dy = playerY - b.y;
             if (dx * dx + dy * dy <= pickupRadius * pickupRadius) {
                 balls.remove(i);
                 collected = true;
@@ -318,785 +344,143 @@ public class GamePanel extends JPanel implements ActionListener {
         }
         if (collected) {
             SoundPlayer.playDing();
-            if (balls.isEmpty()) {
-                door.open();
-            }
+            if (balls.isEmpty()) door.open();
         }
     }
 
-    private boolean collides(double x, double y) {
-        int mapX = (int) x / TILE_SIZE;
-        int mapY = (int) y / TILE_SIZE;
-        return isWallTile(mapX, mapY);
-    }
-
-    /**
-     * Check whether the player is on the exit tile and finish the level.
-     */
     private void checkExit() {
         if (door.isOpen() && isPlayerTouchingDoor()) {
-            levelComplete = true;
-            gameOverMenu = true;
-            victory = true;
-            selectedMenuOption = 0;
-            timer.stop();
-            requestFocusInWindow();
-            repaint();
             if (!victoryMusicPlayed) {
                 victoryMusicPlayed = true;
                 SoundPlayer.playVictoryMusic();
             }
+            triggerGameOver(true);
         }
     }
 
-    private boolean isPlayerTouchingDoor() {
-        int mapX = (int) playerX / TILE_SIZE;
-        int mapY = (int) playerY / TILE_SIZE;
-        return mapX == exitTileX - 1 && mapY == exitTileY;
-    }
+    // -----------------------------------------------------------------------
+    // Map / collision helpers (package-private — used by Renderer)
+    // -----------------------------------------------------------------------
 
-    private boolean isExitOpen() {
-        return door.isOpen();
-    }
-
-    private int getMapTile(int mapX, int mapY) {
-        if (door.isAt(mapX, mapY)) {
-            return door.getMapValue();
-        }
+    int getMapTile(int mapX, int mapY) {
+        if (door.isAt(mapX, mapY)) return door.getMapValue();
         return map[mapY][mapX];
     }
 
+    boolean isExitOpen() {
+        return door.isOpen();
+    }
+
+    // -----------------------------------------------------------------------
+    // Private map helpers
+    // -----------------------------------------------------------------------
+
     private boolean isWallTile(int mapX, int mapY) {
-        if (mapX < 0 || mapX >= MAP_SIZE || mapY < 0 || mapY >= MAP_SIZE) {
-            return true;
-        }
-        if (door.isAt(mapX, mapY)) {
-            return !door.isOpen();
-        }
+        int mapSize = config.mapSize;
+        if (mapX < 0 || mapX >= mapSize || mapY < 0 || mapY >= mapSize) return true;
+        if (door.isAt(mapX, mapY)) return !door.isOpen();
         return getMapTile(mapX, mapY) != 0;
     }
 
-    @Override
-    /**
-     * Swing paint callback. Draws the 3D scene, minimap, HUD and overlays.
-     */
-    protected void paintComponent(Graphics g) {
-        super.paintComponent(g);
-        drawScene(g);
-        drawMinimap(g);
-        drawHUD(g);
-        drawStatus(g);
-        if (gameOverMenu) {
-            drawGameOverMenu(g);
-        }
+    private boolean collides(double x, double y) {
+        return isWallTile((int) x / TILE_SIZE, (int) y / TILE_SIZE);
     }
 
-    // Main rendering method: draws the 3D scene using raycasting
-    /**
-     * Perform raycasting to render the 3D view into the screen buffer.
-     */
-    private void drawScene(Graphics g) {
-        int width = getWidth();
-        int height = getHeight();
-        if (width <= 0 || height <= 0) return;
-
-        // Ensure back-buffer matches current size
-        if (screenBuffer == null || screenBuffer.getWidth() != width || screenBuffer.getHeight() != height) {
-            screenBuffer = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
-            screenPixels = ((DataBufferInt) screenBuffer.getRaster().getDataBuffer()).getData();
-        }
-
-        int horizon = height / 2;
-        int skyColor = (18 << 16) | (24 << 8) | 60;    // dark night sky
-        int floorColor = (16 << 16) | (20 << 8) | 32;  // dim ground for nighttime
-
-        // Fill sky and floor
-        int row = 0;
-        for (int y = 0; y < horizon; y++) {
-            int offset = row * width;
-            for (int x = 0; x < width; x++) {
-                screenPixels[offset + x] = skyColor;
-            }
-            row++;
-        }
-        for (int y = horizon; y < height; y++) {
-            int offset = row * width;
-            for (int x = 0; x < width; x++) {
-                screenPixels[offset + x] = floorColor;
-            }
-            row++;
-        }
-
-        double fov = Math.toRadians(60);
-        int rayCount = width / 2; // keep existing visual density
-        double rayStep = fov / rayCount;
-        double startAngle = playerAngle - fov / 2;
-        double[] rayDistances = new double[rayCount];
-
-        for (int ray = 0; ray < rayCount; ray++) {
-            double rayAngle = startAngle + ray * rayStep;
-            RayHit hit = castRay(rayAngle);
-            double correctedDistance = hit.distance * Math.cos(rayAngle - playerAngle);
-            rayDistances[ray] = correctedDistance;
-            int lineHeight = (int) ((TILE_SIZE * height) / correctedDistance);
-            if (lineHeight < 1) lineHeight = 1;
-            if (lineHeight > height) lineHeight = height;
-
-            int lineOffset = horizon - lineHeight / 2;
-            int drawStart = Math.max(0, lineOffset);
-            int drawEnd = Math.min(height - 1, lineOffset + lineHeight);
-            int screenX = ray * 2;
-            if (screenX < 0) continue;
-
-            for (int xOff = 0; xOff < 2; xOff++) {
-                int px = screenX + xOff;
-                if (px < 0 || px >= width) continue;
-                int base = px;
-                for (int y = drawStart; y <= drawEnd; y++) {
-                    int textureY = (int) (((y - lineOffset) * TEX_SIZE) / (double) lineHeight);
-                    textureY = Math.max(0, Math.min(TEX_SIZE - 1, textureY));
-                    int color = hit.texture[hit.textureX][textureY];
-                    if (!(hit.wallType == Door.DOOR_TILE && isExitOpen())) {
-                        if (hit.side == 1) color = shadeColor(color, 0.70);
-                        color = shadeColor(color, Math.max(0.20, 1.0 / (1.0 + correctedDistance * correctedDistance * 0.00005)));
-                    }
-                    screenPixels[y * width + base] = color;
-                }
-            }
-        }
-
-        drawBallSprites(screenPixels, width, height, horizon, startAngle, rayStep, rayCount, rayDistances);
-
-        // Draw the prepared buffer once
-        g.drawImage(screenBuffer, 0, 0, null);
-        drawMonsterSprite(g, width, height);
-    }
-    /**
-     * Draw a simple 2D sprite for the monster in the 3D view when visible.
-     */
-    private void drawMonsterSprite(Graphics g, int width, int height) {
-        double mx = monster.getX();
-        double my = monster.getY();
-        double dx = mx - playerX;
-        double dy = my - playerY;
-        double distance = Math.sqrt(dx * dx + dy * dy);
-        if (distance <= 0) {
-            return;
-        }
-
-        double angleToMonster = Math.atan2(dy, dx);
-        double relativeAngle = normalizeAngle(angleToMonster - playerAngle);
-        double fov = Math.toRadians(60);
-        if (Math.abs(relativeAngle) > fov / 2) {
-            return;
-        }
-
-        // Compute perpendicular (projection) distances for accurate occlusion test.
-        double spritePerpDist = distance * Math.cos(relativeAngle);
-        double wallPerpDist = castRayDistance(playerAngle + relativeAngle);
-        if (wallPerpDist + 1.0 < spritePerpDist) {
-            return;
-        }
-
-        int screenX = (int) (((relativeAngle / (fov / 2)) * 0.5 + 0.5) * width);
-        int spriteSize = (int) ((TILE_SIZE * height) / distance * 0.4);
-        spriteSize = Math.max(12, Math.min(spriteSize, 80));
-        int spriteY = height / 2 - spriteSize / 2;
-
-        java.awt.image.BufferedImage sprite = monster.getSprite();
-        if (sprite != null) {
-            g.drawImage(sprite, screenX - spriteSize / 2, spriteY, spriteSize, spriteSize, null);
-        } else {
-            g.setColor(new Color(230, 40, 40, 220));
-            g.fillOval(screenX - spriteSize / 2, spriteY, spriteSize, spriteSize);
-            g.setColor(Color.BLACK);
-            g.drawOval(screenX - spriteSize / 2, spriteY, spriteSize, spriteSize);
-        }
+    private boolean isPlayerTouchingDoor() {
+        return (int) playerX / TILE_SIZE == exitTileX - 1
+            && (int) playerY / TILE_SIZE == exitTileY;
     }
 
-    private void drawBallSprites(int[] pixels, int width, int height, int horizon, double startAngle, double rayStep, int rayCount, double[] rayDistances) {
-        double fov = Math.toRadians(60);
-        double projectionPlane = (width / 2.0) / Math.tan(fov / 2.0);
+    private boolean isEmptyTile(int x, int y) {
+        int mapSize = config.mapSize;
+        if (x < 0 || x >= mapSize || y < 0 || y >= mapSize) return false;
+        return map[y][x] == 0;
+    }
 
-        for (Ball ball : balls) {
-            double dx = ball.x - playerX;
-            double dy = ball.y - playerY;
-            double distance = Math.sqrt(dx * dx + dy * dy);
-            if (distance < 0.1) {
-                continue;
-            }
+    /**
+     * Find an empty tile for a monster, avoiding start, exit, and all
+     * positions already in {@code taken}.
+     */
+    private int[] findEmptyMonsterSpawn(List<int[]> taken) {
+        int mapSize = config.mapSize;
+        int spawnX, spawnY;
+        do {
+            spawnX = 1 + random.nextInt(mapSize - 2);
+            spawnY = 1 + random.nextInt(mapSize - 2);
+            final int fx = spawnX, fy = spawnY;
+            if (!isEmptyTile(fx, fy)) continue;
+            if (fx == startTileX && fy == startTileY) continue;
+            if (fx == exitTileX  && fy == exitTileY)  continue;
+            if (taken.stream().anyMatch(p -> p[0] == fx && p[1] == fy)) continue;
+            break;
+        } while (true);
+        return new int[]{spawnX, spawnY};
+    }
 
-            double angleToBall = Math.atan2(dy, dx);
-            double angleDiff = normalizeAngle(angleToBall - playerAngle);
-            if (Math.abs(angleDiff) > fov / 2.0) {
-                continue;
-            }
-
-            int spriteScreenX = (int) ((width / 2.0) + projectionPlane * Math.tan(angleDiff));
-            int spriteSize = (int) ((TILE_SIZE * height) / distance * 0.20);
-            if (spriteSize < 18) spriteSize = 18;
-            if (spriteSize > 90) spriteSize = 90;
-            int spriteHalf = spriteSize / 2;
-
-            int floatOffset = (int) (Math.sin(floatPhase + distance * 0.05) * 8);
-            int spriteScreenY = horizon - spriteHalf - 12 + floatOffset;
-            int spriteTop = spriteScreenY - spriteHalf;
-            int spriteBottom = spriteScreenY + spriteHalf;
-            int spriteLeft = spriteScreenX - spriteHalf;
-            int spriteRight = spriteScreenX + spriteHalf;
-
-            double wallDistance = castRayDistance(playerAngle + angleDiff);
-            if (wallDistance < distance - 1) {
-                continue;
-            }
-
-            int baseColor = 0x7ED6FF;
-            int glow = 0xD8F2FF;
-            for (int screenX = spriteLeft; screenX < spriteRight; screenX++) {
-                if (screenX < 0 || screenX >= width) continue;
-                int rayIndex = screenX / 2;
-                if (rayIndex < 0 || rayIndex >= rayCount) continue;
-                double spritePerpDist = distance * Math.cos(angleDiff);
-                if (spritePerpDist >= rayDistances[rayIndex] - 1) continue;
-                for (int screenY = spriteTop; screenY < spriteBottom; screenY++) {
-                    if (screenY < 0 || screenY >= height) continue;
-                    int dxSprite = screenX - spriteScreenX;
-                    int dySprite = screenY - spriteScreenY;
-                    int absX = Math.abs(dxSprite);
-                    int absY = Math.abs(dySprite);
-                    if (absX + absY > spriteHalf) continue;
-
-                    double facetShade;
-                    if (dySprite < 0) {
-                        facetShade = 1.15;
-                    } else if (dxSprite < 0) {
-                        facetShade = 0.95;
-                    } else {
-                        facetShade = 0.80;
-                    }
-                    double edge = 1.0 - (double) (absX + absY) / (spriteHalf * 2.0);
-                    int color = shadeColor(baseColor, Math.max(0.6, facetShade));
-                    if (absX + absY < spriteHalf / 4) {
-                        color = shadeColor(glow, 0.5 + edge * 0.5);
-                    }
-                    double depthFactor = 1.0 - (distance / 800.0);
-                    int shaded = shadeColor(color, Math.max(0.35, 0.5 + depthFactor * 0.5));
-                    pixels[screenY * width + screenX] = shaded;
-                }
-            }
-        }
+    private void generateRandomMap() {
+        map = MazeGenerator.generateMaze(config.mapSize, startTileX, startTileY,
+                                         exitTileX - 1, exitTileY);
+        map[startTileY][startTileX]     = 0;
+        map[startTileY][startTileX + 1] = 0;
+        map[startTileY + 1][startTileX] = 0;
+        map[exitTileY][exitTileX - 1]   = 0;
     }
 
     private double normalizeAngle(double angle) {
-        // Normalize angle into [-PI, PI]
-        while (angle > Math.PI) {
-            angle -= 2 * Math.PI;
-        }
-        while (angle < -Math.PI) {
-            angle += 2 * Math.PI;
-        }
+        while (angle >  Math.PI) angle -= 2 * Math.PI;
+        while (angle < -Math.PI) angle += 2 * Math.PI;
         return angle;
     }
 
-    // DDA raycasting to find wall hit and texture info
-    /**
-     * Cast a DDA ray at the given angle and return hit information including texture coords.
-     */
-    private RayHit castRay(double rayAngle) {
-        double rayDirX = Math.cos(rayAngle);
-        double rayDirY = Math.sin(rayAngle);
-
-        int mapX = (int) (playerX / TILE_SIZE);
-        int mapY = (int) (playerY / TILE_SIZE);
-
-        double deltaDistX = rayDirX == 0 ? 1e30 : Math.abs(TILE_SIZE / rayDirX);
-        double deltaDistY = rayDirY == 0 ? 1e30 : Math.abs(TILE_SIZE / rayDirY);
-
-        int stepX;
-        int stepY;
-        double sideDistX;
-        double sideDistY;
-
-        if (rayDirX < 0) {
-            stepX = -1;
-            sideDistX = (playerX - mapX * TILE_SIZE) * deltaDistX / TILE_SIZE;
-        } else {
-            stepX = 1;
-            sideDistX = ((mapX + 1) * TILE_SIZE - playerX) * deltaDistX / TILE_SIZE;
-        }
-        if (rayDirY < 0) {
-            stepY = -1;
-            sideDistY = (playerY - mapY * TILE_SIZE) * deltaDistY / TILE_SIZE;
-        } else {
-            stepY = 1;
-            sideDistY = ((mapY + 1) * TILE_SIZE - playerY) * deltaDistY / TILE_SIZE;
-        }
-
-        boolean hit = false;
-        int side = 0;
-        int wallType = 1;
-
-        while (!hit) {
-            if (sideDistX < sideDistY) {
-                sideDistX += deltaDistX;
-                mapX += stepX;
-                side = 0;
-            } else {
-                sideDistY += deltaDistY;
-                mapY += stepY;
-                side = 1;
-            }
-
-            if (mapX < 0 || mapX >= MAP_SIZE || mapY < 0 || mapY >= MAP_SIZE) {
-                break;
-            }
-            int tile = getMapTile(mapX, mapY);
-            if (tile > 0) {
-                hit = true;
-                wallType = tile;
-            }
-        }
-
-        double distance;
-        if (side == 0) {
-            distance = (mapX * TILE_SIZE - playerX + (1 - stepX) * TILE_SIZE / 2.0) / rayDirX;
-        } else {
-            distance = (mapY * TILE_SIZE - playerY + (1 - stepY) * TILE_SIZE / 2.0) / rayDirY;
-        }
-        if (distance <= 0) {
-            distance = 1;
-        }
-
-        double wallX;
-        if (side == 0) {
-            wallX = playerY + distance * rayDirY;
-        } else {
-            wallX = playerX + distance * rayDirX;
-        }
-        wallX %= TILE_SIZE;
-        if (wallX < 0) {
-            wallX += TILE_SIZE;
-        }
-
-        int textureX = (int) ((wallX / TILE_SIZE) * TEX_SIZE);
-        if (textureX < 0) {
-            textureX = 0;
-        }
-        if (textureX >= TEX_SIZE) {
-            textureX = TEX_SIZE - 1;
-        }
-        if ((side == 0 && rayDirX > 0) || (side == 1 && rayDirY < 0)) {
-            textureX = TEX_SIZE - 1 - textureX;
-        }
-
-        int[][] texture = wallType == Door.DOOR_TILE
-                ? (isExitOpen() ? Textures.DOOR_OPEN : Textures.DOOR)
-                : Textures.STONE;
-        return new RayHit(distance, wallType, textureX, side, texture);
-    }
-
-    /**
-     * DDA helper: returns the perpendicular (fish-eye corrected) distance
-     * from the player to the first wall hit for the given ray angle.
-     */
-    private double castRayDistance(double rayAngle) {
-        double rayDirX = Math.cos(rayAngle);
-        double rayDirY = Math.sin(rayAngle);
-
-        int mapX = (int) (playerX / TILE_SIZE);
-        int mapY = (int) (playerY / TILE_SIZE);
-
-        double deltaDistX = rayDirX == 0 ? 1e30 : Math.abs(TILE_SIZE / rayDirX);
-        double deltaDistY = rayDirY == 0 ? 1e30 : Math.abs(TILE_SIZE / rayDirY);
-
-        int stepX;
-        int stepY;
-        double sideDistX;
-        double sideDistY;
-
-        if (rayDirX < 0) {
-            stepX = -1;
-            sideDistX = (playerX - mapX * TILE_SIZE) * deltaDistX / TILE_SIZE;
-        } else {
-            stepX = 1;
-            sideDistX = ((mapX + 1) * TILE_SIZE - playerX) * deltaDistX / TILE_SIZE;
-        }
-        if (rayDirY < 0) {
-            stepY = -1;
-            sideDistY = (playerY - mapY * TILE_SIZE) * deltaDistY / TILE_SIZE;
-        } else {
-            stepY = 1;
-            sideDistY = ((mapY + 1) * TILE_SIZE - playerY) * deltaDistY / TILE_SIZE;
-        }
-
-        boolean hit = false;
-        int side = 0;
-
-        while (!hit) {
-            if (sideDistX < sideDistY) {
-                sideDistX += deltaDistX;
-                mapX += stepX;
-                side = 0;
-            } else {
-                sideDistY += deltaDistY;
-                mapY += stepY;
-                side = 1;
-            }
-
-            if (mapX < 0 || mapX >= MAP_SIZE || mapY < 0 || mapY >= MAP_SIZE) {
-                break;
-            }
-            if (getMapTile(mapX, mapY) > 0) {
-                hit = true;
-            }
-        }
-
-        double distance;
-        if (side == 0) {
-            distance = (mapX * TILE_SIZE - playerX + (1 - stepX) * TILE_SIZE / 2.0) / (rayDirX == 0 ? 1e-6 : rayDirX);
-        } else {
-            distance = (mapY * TILE_SIZE - playerY + (1 - stepY) * TILE_SIZE / 2.0) / (rayDirY == 0 ? 1e-6 : rayDirY);
-        }
-        if (distance <= 0) {
-            distance = 1;
-        }
-
-        // Correct for fish-eye by returning perpendicular distance
-        return distance * Math.cos(rayAngle - playerAngle);
-    }
-
-    /**
-     * Apply a simple shading factor to an RGB color.
-     */
-    private int shadeColor(int rgb, double factor) {
-        int r = (rgb >> 16) & 0xFF;
-        int g = (rgb >> 8) & 0xFF;
-        int b = rgb & 0xFF;
-        r = (int) Math.max(0, Math.min(255, r * factor));
-        g = (int) Math.max(0, Math.min(255, g * factor));
-        b = (int) Math.max(0, Math.min(255, b * factor));
-        return (r << 16) | (g << 8) | b;
-    }
-
-    /**
-     * Draw a small top-down minimap showing tiles, player, start/exit and the monster.
-     */
-    private void drawMinimap(Graphics g) {
-        int minimapSize = MAP_SIZE * 16;
-        int offsetX = 10;
-        int offsetY = 80;
-        g.setColor(new Color(0, 0, 0, 160));
-        g.fillRect(offsetX - 4, offsetY - 4, minimapSize + 8, minimapSize + 8);
-
-        for (int y = 0; y < MAP_SIZE; y++) {
-            for (int x = 0; x < MAP_SIZE; x++) {
-                if (x == exitTileX && y == exitTileY) {
-                    if (isExitOpen()) {
-                        g.setColor(Color.WHITE);
-                        g.fillRect(offsetX + x * 16, offsetY + y * 16, 16, 16);
-                    } else {
-                        g.setColor(new Color(34, 139, 34));
-                        g.fillRect(offsetX + x * 16, offsetY + y * 16, 16, 16);
-                        g.setColor(new Color(120, 60, 20));
-                        g.fillRect(offsetX + x * 16 + 4, offsetY + y * 16 + 2, 8, 12);
-                        g.setColor(Color.BLACK);
-                        g.drawRect(offsetX + x * 16 + 4, offsetY + y * 16 + 2, 8, 12);
-                    }
-                    continue;
-                }
-                g.setColor(map[y][x] > 0 ? Color.DARK_GRAY : Color.LIGHT_GRAY);
-                g.fillRect(offsetX + x * 16, offsetY + y * 16, 16, 16);
-            }
-        }
-
-        int px = (int) (playerX / TILE_SIZE * 16);
-        int py = (int) (playerY / TILE_SIZE * 16);
-        g.setColor(Color.RED);
-        g.fillOval(offsetX + px - 4, offsetY + py - 4, 8, 8);
-        int lineX = offsetX + px + (int) (Math.cos(playerAngle) * 12);
-        int lineY = offsetY + py + (int) (Math.sin(playerAngle) * 12);
-        g.drawLine(offsetX + px, offsetY + py, lineX, lineY);
-
-        int startPx = offsetX + startTileX * 16;
-        int startPy = offsetY + startTileY * 16;
-        g.setColor(Color.BLUE);
-        g.fillOval(startPx + 4, startPy + 4, 8, 8);
-        // Draw objective balls on minimap
-        g.setColor(Color.MAGENTA);
-        for (Ball ball : balls) {
-            int bx = offsetX + (int) (ball.x / TILE_SIZE * 16);
-            int by = offsetY + (int) (ball.y / TILE_SIZE * 16);
-            g.fillOval(bx - 4, by - 4, 8, 8);
-        }
-
-        g.setColor(Color.YELLOW);
-        for (Ball ball : balls) {
-            int bx = offsetX + (int) (ball.x / TILE_SIZE * 16);
-            int by = offsetY + (int) (ball.y / TILE_SIZE * 16);
-            g.fillOval(bx - 3, by - 3, 6, 6);
-        }
-
-        monster.drawOnMinimap(g, offsetX, offsetY, 16);
-    }
-
-    /**
-     * Draw on-screen HUD including elapsed time and monster state.
-     */
-    private void drawHUD(Graphics g) {
-        int width = getWidth();
-        int padding = 12;
-        int timeSeconds = (int) (remainingTimeMillis / 1000);
-        int minutes = timeSeconds / 60;
-        int seconds = timeSeconds % 60;
-        String timerText = String.format("Time: %02d:%02d", minutes, seconds);
-        g.setColor(new Color(0, 0, 0, 160));
-        g.fillRect(width - 220, 10, 210, 36);
-
-        g.setColor(Color.WHITE);
-        g.setFont(g.getFont().deriveFont(16f));
-        g.drawString(timerText, width - 208, 32);
-    }
+    // -----------------------------------------------------------------------
+    // Input
+    // -----------------------------------------------------------------------
 
     private class InputAdapter extends KeyAdapter {
         @Override
-        /**
-         * Handle key press events to set movement flags.
-         */
         public void keyPressed(KeyEvent e) {
             switch (e.getKeyCode()) {
-                case KeyEvent.VK_W -> moveForward = true;
-                case KeyEvent.VK_S -> moveBackward = true;
-                case KeyEvent.VK_A -> strafeLeft = true;
-                case KeyEvent.VK_D -> strafeRight = true;
-                case KeyEvent.VK_LEFT -> turnLeft = true;
-                case KeyEvent.VK_RIGHT -> turnRight = true;
-                case KeyEvent.VK_UP -> {
-                    if (gameOverMenu) {
-                        selectedMenuOption = (selectedMenuOption + MENU_OPTIONS.length - 1) % MENU_OPTIONS.length;
-                        requestFocusInWindow();
-                        repaint();
-                    }
-                }
-                case KeyEvent.VK_DOWN -> {
-                    if (gameOverMenu) {
-                        selectedMenuOption = (selectedMenuOption + 1) % MENU_OPTIONS.length;
-                        requestFocusInWindow();
-                        repaint();
-                    }
-                }
-                case KeyEvent.VK_ENTER -> {
-                    if (gameOverMenu) {
-                        selectGameOverMenuOption();
-                        requestFocusInWindow();
-                        repaint();
-                    }
-                }
-                case KeyEvent.VK_R -> restartGame();
+                case KeyEvent.VK_W      -> moveForward  = true;
+                case KeyEvent.VK_S      -> moveBackward = true;
+                case KeyEvent.VK_A      -> strafeLeft   = true;
+                case KeyEvent.VK_D      -> strafeRight  = true;
+                case KeyEvent.VK_LEFT   -> turnLeft     = true;
+                case KeyEvent.VK_RIGHT  -> turnRight    = true;
+                case KeyEvent.VK_SHIFT  -> sprinting    = true;
+                case KeyEvent.VK_UP    -> { if (gameOverMenu) navigateMenu(-1); }
+                case KeyEvent.VK_DOWN  -> { if (gameOverMenu) navigateMenu(+1); }
+                case KeyEvent.VK_ENTER -> { if (gameOverMenu) selectMenuOption(); }
+                case KeyEvent.VK_R     -> restartGame();
             }
         }
 
         @Override
-        /**
-         * Handle key release events to clear movement flags.
-         */
         public void keyReleased(KeyEvent e) {
             switch (e.getKeyCode()) {
-                case KeyEvent.VK_W -> moveForward = false;
-                case KeyEvent.VK_S -> moveBackward = false;
-                case KeyEvent.VK_A -> strafeLeft = false;
-                case KeyEvent.VK_D -> strafeRight = false;
-                case KeyEvent.VK_LEFT -> turnLeft = false;
-                case KeyEvent.VK_RIGHT -> turnRight = false;
+                case KeyEvent.VK_W      -> moveForward  = false;
+                case KeyEvent.VK_S      -> moveBackward = false;
+                case KeyEvent.VK_A      -> strafeLeft   = false;
+                case KeyEvent.VK_D      -> strafeRight  = false;
+                case KeyEvent.VK_LEFT   -> turnLeft     = false;
+                case KeyEvent.VK_RIGHT  -> turnRight    = false;
+                case KeyEvent.VK_SHIFT  -> sprinting    = false;
             }
-            // Ensure visual feedback even if the main timer is stopped
             if (gameOverMenu) repaint();
         }
     }
 
-    private static class RayHit {
-        final double distance;
-        final int wallType;
-        final int textureX;
-        final int side;
-        final int[][] texture;
-
-        RayHit(double distance, int wallType, int textureX, int side, int[][] texture) {
-            this.distance = distance;
-            this.wallType = wallType;
-            this.textureX = textureX;
-            this.side = side;
-            this.texture = texture;
-        }
+    private void navigateMenu(int delta) {
+        selectedMenuOption = (selectedMenuOption + menuOptions.length + delta) % menuOptions.length;
+        requestFocusInWindow();
+        repaint();
     }
 
-    private void selectGameOverMenuOption() {
-        if (selectedMenuOption == 0) {
-            restartGame();
-        } else {
-            System.exit(0);
-        }
-    }
-
-    private void drawStatus(Graphics g) {
-        int width = getWidth();
-        int statusWidth = 240;
-        int statusHeight = 60;
-        g.setColor(new Color(0, 0, 0, 200));
-        g.fillRect(10, 10, statusWidth, statusHeight);
-        g.setColor(Color.WHITE);
-        g.setFont(g.getFont().deriveFont(16f));
-        String status = "Balls: " + (OBJECTIVE_COUNT - balls.size()) + " / " + OBJECTIVE_COUNT;
-        g.drawString(status, 18, 32);
-        String hint = balls.isEmpty() ? "Now go to the exit." : "Collect all balls first.";
-        g.drawString(hint, 18, 52);
-    }
-
-    private void drawGameOverMenu(Graphics g) {
-        int width = getWidth();
-        int height = getHeight();
-        String title = victory ? "Victory!" : "Game Over";
-        String subtitle = victory ? "You reached the exit." : "You were defeated.";
-
-        g.setColor(new Color(0, 0, 0, 200));
-        g.fillRect(0, 0, width, height);
-
-        int boxWidth = 420;
-        int boxHeight = 240;
-        int boxX = width / 2 - boxWidth / 2;
-        int boxY = height / 2 - boxHeight / 2;
-
-        g.setColor(Color.WHITE);
-        g.fillRect(boxX, boxY, boxWidth, boxHeight);
-        g.setColor(Color.BLACK);
-        g.drawRect(boxX, boxY, boxWidth, boxHeight);
-
-        g.setColor(Color.BLACK);
-        g.setFont(g.getFont().deriveFont(36f));
-        int titleWidth = g.getFontMetrics().stringWidth(title);
-        g.drawString(title, width / 2 - titleWidth / 2, boxY + 60);
-
-        g.setFont(g.getFont().deriveFont(20f));
-        int subtitleWidth = g.getFontMetrics().stringWidth(subtitle);
-        g.drawString(subtitle, width / 2 - subtitleWidth / 2, boxY + 100);
-
-        g.setFont(g.getFont().deriveFont(22f));
-        for (int i = 0; i < MENU_OPTIONS.length; i++) {
-            String option = MENU_OPTIONS[i];
-            int optionY = boxY + 140 + i * 32;
-            if (i == selectedMenuOption) {
-                g.setColor(new Color(50, 100, 220));
-                g.fillRoundRect(width / 2 - 100, optionY - 24, 200, 30, 12, 12);
-                g.setColor(Color.WHITE);
-            } else {
-                g.setColor(Color.BLACK);
-            }
-            int optionWidth = g.getFontMetrics().stringWidth(option);
-            g.drawString(option, width / 2 - optionWidth / 2, optionY);
-        }
-
-        g.setFont(g.getFont().deriveFont(16f));
-        String hint = "Use UP/DOWN and ENTER to choose.";
-        int hintWidth = g.getFontMetrics().stringWidth(hint);
-        g.setColor(Color.DARK_GRAY);
-        g.drawString(hint, width / 2 - hintWidth / 2, boxY + boxHeight - 20);
-    }
-
-    private static class Textures {
-        static final int[][] BRICK = createBrick();
-        static final int[][] WOOD = createWood();
-        static final int[][] STONE = createStone();
-        static final int[][] DOOR = createDoor();
-        static final int[][] DOOR_OPEN = createOpenDoor();
-        static final int[][] MARBLE = createMarble();
-
-        /**
-         * Generate a simple brick texture pattern.
-         */
-        private static int[][] createBrick() {
-            int[][] tex = new int[TEX_SIZE][TEX_SIZE];
-            for (int y = 0; y < TEX_SIZE; y++) {
-                for (int x = 0; x < TEX_SIZE; x++) {
-                    int block = ((x / 16) + (y / 16)) % 2 == 0 ? 0xA04030 : 0x8B2A1D; // alternating brick colors
-                    tex[x][y] = block;
-                }
-            }
-            return tex;
-        }
-
-        /**
-         * Generate a simple wood planks texture.
-         */
-        private static int[][] createWood() {
-            int[][] tex = new int[TEX_SIZE][TEX_SIZE];
-            for (int y = 0; y < TEX_SIZE; y++) {
-                for (int x = 0; x < TEX_SIZE; x++) {
-                    int base = 0xA07840;
-                    if ((x % 8) == 0) {
-                        base = 0x7A542D;
-                    }
-                    tex[x][y] = base;
-                }
-            }
-            return tex;
-        }
-
-        /**
-         * Generate a stone texture with slight color variation.
-         */
-        private static int[][] createStone() {
-            int[][] tex = new int[TEX_SIZE][TEX_SIZE];
-            for (int y = 0; y < TEX_SIZE; y++) {
-                for (int x = 0; x < TEX_SIZE; x++) {
-                    int base = 0x2E7D32;
-                    int variation = (((x * 5) ^ (y * 11)) & 0x1F) - 8;
-                    int green = Math.max(0, Math.min(255, ((base >> 8) & 0xFF) + variation));
-                    int red = Math.max(0, Math.min(255, ((base >> 16) & 0xFF) - 12 + ((x + y) % 4 == 0 ? 6 : 0)));
-                    int blue = Math.max(0, Math.min(255, ((base) & 0xFF) - 10));
-                    tex[x][y] = (red << 16) | (green << 8) | blue;
-                }
-            }
-            return tex;
-        }
-
-        /**
-         * Generate a marble-like tile texture.
-         */
-        private static int[][] createMarble() {
-            int[][] tex = new int[TEX_SIZE][TEX_SIZE];
-            for (int y = 0; y < TEX_SIZE; y++) {
-                for (int x = 0; x < TEX_SIZE; x++) {
-                    int base = 0xC3B091;
-                    if (((x + y) % 16) < 4) {
-                        base = 0xA8977A;
-                    }
-                    tex[x][y] = base;
-                }
-            }
-            return tex;
-        }
-
-        private static int[][] createDoor() {
-            int[][] tex = new int[TEX_SIZE][TEX_SIZE];
-            for (int y = 0; y < TEX_SIZE; y++) {
-                for (int x = 0; x < TEX_SIZE; x++) {
-                    int shade = ((x / 8) % 2 == 0) ? 0x755531 : 0x8B6A42;
-                    if (x > 20 && x < 44) {
-                        shade = ((y / 12) % 2 == 0) ? 0x5C3D1B : 0x6F4F28;
-                    }
-                    tex[x][y] = shade;
-                }
-            }
-            return tex;
-        }
-
-        private static int[][] createOpenDoor() {
-            int[][] tex = new int[TEX_SIZE][TEX_SIZE];
-            for (int y = 0; y < TEX_SIZE; y++) {
-                for (int x = 0; x < TEX_SIZE; x++) {
-                    tex[x][y] = 0xFFFFFF;
-                }
-            }
-            return tex;
+    private void selectMenuOption() {
+        switch (menuOptions[selectedMenuOption]) {
+            case "Next Level"  -> nextLevel();
+            case "Restart"     -> restartGame();
+            case "Play Again"  -> { loadLevel(0); timer.start(); }
+            case "Quit"        -> System.exit(0);
         }
     }
 }
