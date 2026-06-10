@@ -51,6 +51,12 @@ public class GamePanel extends JPanel implements ActionListener {
     private static final int    FOOTSTEP_INTERVAL_MS = 300;
     private static final int    SPRINT_FOOTSTEP_MS   = 160;
 
+    // Stamina — all rates are per second
+    static final double  MAX_STAMINA               = 100.0;
+    private static final double STAMINA_DRAIN      = 25.0;  // depleted per second while sprinting
+    private static final double STAMINA_REGEN      = 12.5;  // restored per second while resting
+    private static final double STAMINA_EXHAUST_THRESHOLD = 20.0; // stamina needed to sprint again after exhaustion
+
     // -----------------------------------------------------------------------
     // Fixed spawn positions
     // -----------------------------------------------------------------------
@@ -72,7 +78,13 @@ public class GamePanel extends JPanel implements ActionListener {
     double              playerX;
     double              playerY;
     double              playerAngle;
+    /** Effective sprint state — true only when SHIFT held, not exhausted, and stamina > 0. */
     boolean             sprinting = false;
+    /** Current stamina in [0, MAX_STAMINA]. */
+    double              stamina   = MAX_STAMINA;
+    /** True while stamina is recovering after full exhaustion. Sprint is locked until
+     *  stamina reaches {@code STAMINA_EXHAUST_THRESHOLD}. */
+    boolean             exhausted = false;
 
     final List<Monster> monsters = new ArrayList<>();
     Door                door;
@@ -91,7 +103,8 @@ public class GamePanel extends JPanel implements ActionListener {
     // Private — movement flags
     // -----------------------------------------------------------------------
     private boolean moveForward, moveBackward, strafeLeft, strafeRight;
-    private boolean turnLeft, turnRight;  // keyboard fallback (arrow keys)
+    private boolean turnLeft, turnRight;     // keyboard fallback (arrow keys)
+    private boolean shiftHeld = false;       // raw SHIFT key; sprinting = derived from this
 
     // -----------------------------------------------------------------------
     // Private — mouse look
@@ -290,7 +303,7 @@ public class GamePanel extends JPanel implements ActionListener {
             return;
         }
 
-        applyMovement();
+        applyMovement(deltaTime);
 
         for (Monster m : monsters) m.update(playerX, playerY, map, TILE_SIZE);
         updateMonsterAudio();
@@ -307,12 +320,29 @@ public class GamePanel extends JPanel implements ActionListener {
         checkExit();
     }
 
-    private void applyMovement() {
+    private void applyMovement(long deltaTime) {
         // --- Rotation: mouse delta takes priority; arrow keys as fallback ---
         playerAngle += mouseDeltaX;
         mouseDeltaX  = 0;
         if (turnLeft)  playerAngle -= ROTATE_SPEED;
         if (turnRight) playerAngle += ROTATE_SPEED;
+
+        // --- Stamina / exhaustion ---
+        double dt = deltaTime / 1000.0;   // convert ms → seconds
+        if (shiftHeld && !exhausted && stamina > 0) {
+            sprinting = true;
+            stamina  -= STAMINA_DRAIN * dt;
+            if (stamina <= 0) {
+                stamina   = 0;
+                exhausted = true;
+                sprinting = false;
+            }
+        } else {
+            sprinting = false;
+            stamina  += STAMINA_REGEN * dt;
+            if (stamina >= MAX_STAMINA) stamina = MAX_STAMINA;
+            if (exhausted && stamina >= STAMINA_EXHAUST_THRESHOLD) exhausted = false;
+        }
 
         // --- Translation ---
         double speed = sprinting ? SPRINT_SPEED : MOVE_SPEED;
@@ -353,6 +383,9 @@ public class GamePanel extends JPanel implements ActionListener {
         selectedMenuOption = 0;
         victoryMusicPlayed = false;
         sprinting          = false;
+        shiftHeld          = false;
+        stamina            = MAX_STAMINA;
+        exhausted          = false;
         mouseDeltaX        = 0;
 
         generateRandomMap();
@@ -571,7 +604,7 @@ public class GamePanel extends JPanel implements ActionListener {
                 case KeyEvent.VK_D      -> strafeRight  = true;
                 case KeyEvent.VK_LEFT   -> turnLeft     = true;   // fallback if no mouse
                 case KeyEvent.VK_RIGHT  -> turnRight    = true;
-                case KeyEvent.VK_SHIFT  -> sprinting    = true;
+                case KeyEvent.VK_SHIFT  -> shiftHeld    = true;
                 case KeyEvent.VK_UP    -> { if (gameOverMenu) navigateMenu(-1); }
                 case KeyEvent.VK_DOWN  -> { if (gameOverMenu) navigateMenu(+1); }
                 case KeyEvent.VK_ENTER -> { if (gameOverMenu) selectMenuOption(); }
@@ -588,7 +621,7 @@ public class GamePanel extends JPanel implements ActionListener {
                 case KeyEvent.VK_D      -> strafeRight  = false;
                 case KeyEvent.VK_LEFT   -> turnLeft     = false;
                 case KeyEvent.VK_RIGHT  -> turnRight    = false;
-                case KeyEvent.VK_SHIFT  -> sprinting    = false;
+                case KeyEvent.VK_SHIFT  -> shiftHeld    = false;
             }
             if (gameOverMenu) repaint();
         }
