@@ -3,11 +3,15 @@ import java.awt.Graphics;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Random;
 import javax.imageio.ImageIO;
 
 
 public class Monster {
+    private List<Pathfinder.Node> currentPath = new ArrayList<>();
+    private long lastPathCalculationTime = 0;
     private static final double WALK_SPEED = 1.0;
     private static final double CHASE_SPEED = 2.2;
     private static final double COLLISION_RADIUS = 16.0;
@@ -68,35 +72,20 @@ public class Monster {
 
     public void update(double playerX, double playerY, int[][] map, int tileSize) {
         boolean visible = canSeePlayer(playerX, playerY, map, tileSize);
-        boolean ahead = isPlayerAhead(playerX, playerY);
         double dx = playerX - x;
         double dy = playerY - y;
         double distance = Math.sqrt(dx * dx + dy * dy);
 
-        // Behavior rules:
-        // - If already in pursuit, continue chasing solely based on distance (persistence).
-        // - If idle, only start chasing when the player is visible and roughly ahead.
-        if (pursuitActive) {
-            // Continue chasing until player is far enough to give up.
-            if (distance <= MAX_CHASE_DISTANCE) {
-                chasing = true;
-                chasePlayer(playerX, playerY, map, tileSize);
-            } else {
-                // Lost due to distance; stop chasing and resume wandering.
-                pursuitActive = false;
-                chasing = false;
-                walk(map, tileSize);
-            }
+        // Start or maintain pursuit if the player is visible, or if already chasing
+        if ((visible || pursuitActive) && distance <= MAX_CHASE_DISTANCE) {
+            pursuitActive = true;
+            chasing = true;
+            followAStarPath(playerX, playerY, map, tileSize, CHASE_SPEED);
         } else {
-            // Only initiate chase when the monster currently sees the player and player is ahead.
-            if (visible && ahead && distance <= MAX_CHASE_DISTANCE) {
-                pursuitActive = true;
-                chasing = true;
-                chasePlayer(playerX, playerY, map, tileSize);
-            } else {
-                chasing = false;
-                walk(map, tileSize);
-            }
+            // Lost the player, go back to wandering
+            pursuitActive = false;
+            chasing = false;
+            wander(map, tileSize);
         }
     }
 
@@ -112,88 +101,148 @@ public class Monster {
         return dot > 0.3;
     }
 
-    private void chasePlayer(double playerX, double playerY, int[][] map, int tileSize) {
-        double dx = playerX - x;
-        double dy = playerY - y;
-        double distance = Math.sqrt(dx * dx + dy * dy);
-        if (distance < 1e-3) return;
-        double step = Math.min(CHASE_SPEED, distance);
-        double nextX = x + dx / distance * step;
-        double nextY = y + dy / distance * step;
+
+    // Smooth movement helper
+private void moveToTarget(double destX, double destY, double speed, int[][] map, int tileSize) {
+    double dx = destX - x;
+    double dy = destY - y;
+    double dist = Math.sqrt(dx * dx + dy * dy);
+    
+    if (dist > 0.1) {
+        // Normalize direction and apply speed
+        directionX = dx / dist;
+        directionY = dy / dist;
+        
+        double nextX = x + directionX * speed;
+        double nextY = y + directionY * speed;
+        
+        // Final collision check just to be safe
         if (!collides(nextX, y, map, tileSize)) x = nextX;
         if (!collides(x, nextY, map, tileSize)) y = nextY;
     }
+}
 
-    private void walk(int[][] map, int tileSize) {
-        if (!canMoveDirection(directionX, directionY, map, tileSize)) chooseNewDirection(map, tileSize);
-        double nextX = x + directionX * WALK_SPEED;
-        double nextY = y + directionY * WALK_SPEED;
-        boolean canMoveX = !collides(nextX, y, map, tileSize);
-        boolean canMoveY = !collides(x, nextY, map, tileSize);
-        if (canMoveX && canMoveY) { x = nextX; y = nextY; return; }
-        if (canMoveX) { x = nextX; return; }
-        if (canMoveY) { y = nextY; return; }
-        chooseNewDirection(map, tileSize);
-    }
-
-    private boolean canMoveDirection(double dx, double dy, int[][] map, int tileSize) {
-        if (dx == 0 && dy == 0) {
-            return false;
+// Patrolling logic when the player is out of sight
+private void wander(int[][] map, int tileSize) {
+    // If we don't have a tile to walk to, we need to pick one based on our momentum
+    if (currentPath == null || currentPath.isEmpty()) {
+        int currentGridX = (int) (x / tileSize);
+        int currentGridY = (int) (y / tileSize);
+        
+        // 1. Determine our current primary moving direction
+        int currentDirX = 0;
+        int currentDirY = 0;
+        if (Math.abs(directionX) > Math.abs(directionY)) {
+            currentDirX = directionX > 0 ? 1 : -1;
+        } else if (Math.abs(directionY) > 0) {
+            currentDirY = directionY > 0 ? 1 : -1;
+        } else {
+            currentDirX = 1; // Default starting direction if completely stationary
         }
-        double targetX = x + dx * WALK_SPEED;
-        double targetY = y + dy * WALK_SPEED;
-        return !collides(targetX, y, map, tileSize)
-                && !collides(x, targetY, map, tileSize);
-    }
-
-    private void chooseNewDirection(int[][] map, int tileSize) {
-        int tileX = (int) x / tileSize;
-        int tileY = (int) y / tileSize;
-        int[] dx = {1, -1, 0, 0};
-        int[] dy = {0, 0, 1, -1};
-        int[] options = new int[4];
-        int count = 0;
-        int oppositeIndex = getOppositeDirectionIndex();
-        for (int i = 0; i < 4; i++) {
-            int nx = tileX + dx[i];
-            int ny = tileY + dy[i];
-            if (nx < 0 || nx >= map[0].length || ny < 0 || ny >= map.length) {
-                continue;
-            }
-            double checkX = nx * tileSize + tileSize / 2.0;
-            double checkY = ny * tileSize + tileSize / 2.0;
-            if (!collides(checkX, checkY, map, tileSize)) {
-                if (i != oppositeIndex) {
-                    options[count++] = i;
-                }
+        
+        // 2. Check if we can keep going straight
+        boolean canGoStraight = false;
+        int checkX = currentGridX + currentDirX;
+        int checkY = currentGridY + currentDirY;
+        if (checkX >= 0 && checkX < map[0].length && checkY >= 0 && checkY < map.length) {
+            if (map[checkY][checkX] == 0) {
+                canGoStraight = true;
             }
         }
-        if (count == 0) {
-            for (int i = 0; i < 4; i++) {
-                int nx = tileX + dx[i];
-                int ny = tileY + dy[i];
-                if (nx < 0 || nx >= map[0].length || ny < 0 || ny >= map.length) {
-                    continue;
-                }
-                double checkX = nx * tileSize + tileSize / 2.0;
-                double checkY = ny * tileSize + tileSize / 2.0;
-                if (!collides(checkX, checkY, map, tileSize)) {
-                    options[count++] = i;
+        
+        int nextX = currentDirX;
+        int nextY = currentDirY;
+
+        // 3. If we hit a wall, pick a new valid direction
+        if (!canGoStraight) {
+            int[][] directions = {{0, 1}, {1, 0}, {0, -1}, {-1, 0}};
+            List<int[]> validDirs = new ArrayList<>();
+            
+            // Find all valid adjacent tiles
+            for (int[] d : directions) {
+                int nx = currentGridX + d[0];
+                int ny = currentGridY + d[1];
+                if (nx >= 0 && nx < map[0].length && ny >= 0 && ny < map.length && map[ny][nx] == 0) {
+                    // Try to avoid instantly reversing direction (e.g. bouncing back and forth) 
+                    if (d[0] != -currentDirX || d[1] != -currentDirY) {
+                        validDirs.add(d);
+                    }
                 }
             }
+            
+            // If it's trapped in a dead end, allow it to turn completely around
+            if (validDirs.isEmpty()) {
+                for (int[] d : directions) {
+                    int nx = currentGridX + d[0];
+                    int ny = currentGridY + d[1];
+                    if (nx >= 0 && nx < map[0].length && ny >= 0 && ny < map.length && map[ny][nx] == 0) {
+                        validDirs.add(d);
+                    }
+                }
+            }
+            
+            // Pick randomly from the valid options
+            if (!validDirs.isEmpty()) {
+                int[] chosen = validDirs.get(random.nextInt(validDirs.size()));
+                nextX = chosen[0];
+                nextY = chosen[1];
+            } else {
+                nextX = 0; 
+                nextY = 0; // Completely stuck
+            }
         }
-        if (count == 0) { directionX = 0; directionY = 0; return; }
-        int choice = options[random.nextInt(count)];
-        directionX = dx[choice]; directionY = dy[choice];
+        
+        // 4. Assign the next tile to move to
+        if (nextX != 0 || nextY != 0) {
+            currentPath = new ArrayList<>();
+            currentPath.add(new Pathfinder.Node(currentGridX + nextX, currentGridY + nextY));
+        }
+    }
+    
+    // 5. Smoothly move towards the chosen tile
+    if (currentPath != null && !currentPath.isEmpty()) {
+        Pathfinder.Node nextNode = currentPath.get(0);
+        double destX = nextNode.gridX * tileSize + tileSize / 2.0;
+        double destY = nextNode.gridY * tileSize + tileSize / 2.0;
+
+        moveToTarget(destX, destY, WALK_SPEED, map, tileSize);
+
+        // Once it reaches the tile center, clear it so we calculate the next step
+        if (Math.abs(x - destX) < 2.0 && Math.abs(y - destY) < 2.0) {
+            currentPath.clear();
+        }
+    }
+}
+   private void followAStarPath(double targetX, double targetY, int[][] map, int tileSize, double speed) {
+    int currentGridX = (int) (x / tileSize);
+    int currentGridY = (int) (y / tileSize);
+    int targetGridX = (int) (targetX / tileSize);
+    int targetGridY = (int) (targetY / tileSize);
+
+    long currentTime = System.currentTimeMillis();
+
+    // Recalculate path every 500ms to adapt to player movement without hurting performance
+    if (currentPath == null || currentPath.isEmpty() || currentTime - lastPathCalculationTime > 500) {
+        currentPath = Pathfinder.findPath(map, currentGridX, currentGridY, targetGridX, targetGridY);
+        lastPathCalculationTime = currentTime;
     }
 
-    private int getOppositeDirectionIndex() {
-        if (directionX > 0) return 1;
-        if (directionX < 0) return 0;
-        if (directionY > 0) return 3;
-        if (directionY < 0) return 2;
-        return -1;
+    // If a path exists, move towards the first node in the list
+    if (currentPath != null && !currentPath.isEmpty()) {
+        Pathfinder.Node nextNode = currentPath.get(0);
+        
+        // Target the center of the next tile
+        double destX = nextNode.gridX * tileSize + tileSize / 2.0;
+        double destY = nextNode.gridY * tileSize + tileSize / 2.0;
+
+        moveToTarget(destX, destY, speed, map, tileSize);
+
+        // If we reached the center of the current target node, remove it so we move to the next
+        if (Math.abs(x - destX) < 2.0 && Math.abs(y - destY) < 2.0) {
+            currentPath.remove(0);
+        }
     }
+}
 
     public boolean canSeePlayer(double playerX, double playerY, int[][] map, int tileSize) {
         double dx = playerX - x;
