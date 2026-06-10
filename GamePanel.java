@@ -1,4 +1,5 @@
 import javax.swing.JPanel;
+import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import java.awt.AWTException;
 import java.awt.Color;
@@ -96,6 +97,14 @@ public class GamePanel extends JPanel implements ActionListener {
     int                 selectedMenuOption = 0;
     String[]            menuOptions        = {"Restart", "Quit"};
 
+    // Pause menu (ESC)
+    boolean             paused             = false;
+    int                 pauseMenuSelected  = 0;
+    String[]            pauseMenuOptions   = {"Resume", "Back to Menu"};
+
+    /** Set when the remote co-op partner disconnects mid-game. */
+    boolean             remotePlayerLeft   = false;
+
     long                remainingTimeMillis;
     double              floatPhase = 0;
 
@@ -135,6 +144,9 @@ public class GamePanel extends JPanel implements ActionListener {
     NetworkClient networkClient = null;
     /** Non-null in multiplayer — the other player's world position. */
     RemotePlayer  remotePlayer  = null;
+
+    /** Called on the EDT when the player chooses "Back to Menu". */
+    private Runnable returnToMenuAction;
 
     // -----------------------------------------------------------------------
     // Constructors
@@ -205,6 +217,11 @@ public class GamePanel extends JPanel implements ActionListener {
 
     public void requestFocusForInput() {
         requestFocusInWindow();
+    }
+
+    /** Set by LobbyPanel so "Back to Menu" can navigate home without System.exit(). */
+    public void setReturnToMenuAction(Runnable action) {
+        returnToMenuAction = action;
     }
 
     // -----------------------------------------------------------------------
@@ -288,7 +305,7 @@ public class GamePanel extends JPanel implements ActionListener {
     private void onMouseMoved(int mouseX, int mouseY) {
         // Skip the synthetic event that Robot fires after re-centering
         if (recentering) { recentering = false; return; }
-        if (gameOverMenu || levelComplete) return;
+        if (gameOverMenu || levelComplete || paused) return;
 
         int dx = mouseX - getWidth()  / 2;
         mouseDeltaX += dx * MOUSE_SENSITIVITY;
@@ -394,13 +411,14 @@ public class GamePanel extends JPanel implements ActionListener {
 
         // 6. Game-over signal from server
         if (nc.gameOver && !levelComplete) {
+            if (nc.remotePlayerLeft) remotePlayerLeft = true;
             SoundPlayer.stopMonsterSound();
             triggerGameOver(nc.gameWon);
             return;
         }
 
-        // 7. Local player movement (client-authoritative)
-        applyMovement(deltaTime);
+        // 7. Local player movement (client-authoritative; skipped while pause menu is open)
+        if (!paused) applyMovement(deltaTime);
         updateMonsterAudio();
 
         // 8. Send position to server
@@ -680,6 +698,50 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     // -----------------------------------------------------------------------
+    // Pause menu
+    // -----------------------------------------------------------------------
+
+    private void togglePauseMenu() {
+        paused = !paused;
+        pauseMenuSelected = 0;
+        if (paused) {
+            disableMouseCapture();
+            if (networkClient == null) timer.stop();   // freeze single-player
+        } else {
+            if (networkClient == null) {
+                lastUpdateTime = System.currentTimeMillis(); // avoid frame-time spike
+                timer.start();
+            }
+            enableMouseCapture();
+        }
+        repaint();
+    }
+
+    private void navigatePauseMenu(int delta) {
+        pauseMenuSelected = (pauseMenuSelected + pauseMenuOptions.length + delta) % pauseMenuOptions.length;
+        repaint();
+    }
+
+    private void selectPauseOption() {
+        switch (pauseMenuOptions[pauseMenuSelected]) {
+            case "Resume"       -> togglePauseMenu();
+            case "Back to Menu" -> returnToMenu();
+        }
+    }
+
+    void returnToMenu() {
+        timer.stop();
+        paused = false;
+        SoundPlayer.stopMonsterSound();
+        if (networkClient != null) networkClient.disconnect();
+        if (returnToMenuAction != null) {
+            SwingUtilities.invokeLater(returnToMenuAction);
+        } else {
+            System.exit(0);
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Keyboard input
     // -----------------------------------------------------------------------
 
@@ -694,10 +756,11 @@ public class GamePanel extends JPanel implements ActionListener {
                 case KeyEvent.VK_LEFT   -> turnLeft     = true;   // fallback if no mouse
                 case KeyEvent.VK_RIGHT  -> turnRight    = true;
                 case KeyEvent.VK_SHIFT  -> shiftHeld    = true;
-                case KeyEvent.VK_UP    -> { if (gameOverMenu) navigateMenu(-1); }
-                case KeyEvent.VK_DOWN  -> { if (gameOverMenu) navigateMenu(+1); }
-                case KeyEvent.VK_ENTER -> { if (gameOverMenu) selectMenuOption(); }
-                case KeyEvent.VK_R     -> { if (networkClient == null) restartGame(); }
+                case KeyEvent.VK_UP     -> { if (paused) navigatePauseMenu(-1); else if (gameOverMenu) navigateMenu(-1); }
+                case KeyEvent.VK_DOWN   -> { if (paused) navigatePauseMenu(+1); else if (gameOverMenu) navigateMenu(+1); }
+                case KeyEvent.VK_ENTER  -> { if (paused) selectPauseOption(); else if (gameOverMenu) selectMenuOption(); }
+                case KeyEvent.VK_ESCAPE -> { if (!gameOverMenu && !levelComplete) togglePauseMenu(); }
+                case KeyEvent.VK_R      -> { if (networkClient == null && !paused) restartGame(); }
             }
         }
 

@@ -324,7 +324,10 @@ public class GameServer implements Runnable {
         } catch (IOException e) {
             System.out.println("[Server] Player " + playerId + " disconnected.");
         }
-        if (gameActive) endGame(false);
+        if (gameActive) {
+            broadcast("PLAYER_LEFT:" + playerId);
+            endGame(false);
+        }
     }
 
     // -----------------------------------------------------------------------
