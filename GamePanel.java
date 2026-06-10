@@ -137,6 +137,7 @@ public class GamePanel extends JPanel implements ActionListener {
         }
         lastUpdateTime = now;
         updatePlayer(deltaTime);
+        door.updateAnimation(); //mew
         floatPhase += 0.08;
         repaint();
     }
@@ -690,7 +691,7 @@ public class GamePanel extends JPanel implements ActionListener {
         }
 
         int[][] texture = wallType == Door.DOOR_TILE
-                ? (isExitOpen() ? Textures.DOOR_OPEN : Textures.DOOR)
+                ? buildAnimatedDoorTexture() //changed from? (isExitOpen() ? Textures.DOOR_OPEN : Textures.DOOR)
                 : Textures.STONE;
         return new RayHit(distance, wallType, textureX, side, texture);
     }
@@ -1098,5 +1099,21 @@ public class GamePanel extends JPanel implements ActionListener {
             }
             return tex;
         }
+    }
+
+    private int[][] buildAnimatedDoorTexture() {//new
+        double progress = door.getOpenProgress();
+        if (progress <= 0.0) return Textures.DOOR;
+        if (progress >= 1.0) return Textures.DOOR_OPEN;
+
+        int[][] tex = new int[TEX_SIZE][TEX_SIZE];
+        // The door slides upward as it opens — top rows reveal white first
+        int openRows = (int) (TEX_SIZE * progress);
+        for (int x = 0; x < TEX_SIZE; x++) {
+            for (int y = 0; y < TEX_SIZE; y++) {
+                tex[x][y] = (y < openRows) ? Textures.DOOR_OPEN[x][y] : Textures.DOOR[x][y];
+            }
+        }
+        return tex;
     }
 }
