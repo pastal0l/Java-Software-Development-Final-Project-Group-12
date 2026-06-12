@@ -112,6 +112,7 @@ public class Monster {
             visible = false;
         }
 
+        boolean ahead = isPlayerAhead(playerX, playerY);
         double dx = playerX - x;
         double dy = playerY - y;
         double distance = Math.sqrt(dx * dx + dy * dy);
@@ -129,19 +130,42 @@ public class Monster {
                 // Lost sight of the player (or they're too far); give up and resume wandering.
                 pursuitActive = false;
                 chasing = false;
-                walk(map, tileSize);
+                currentPath.clear();
+                wander(map, tileSize);
             }
         } else {
             // Only initiate chase when the monster currently sees the player and player is ahead.
             if (visible && ahead && distance <= MAX_CHASE_DISTANCE) {
                 pursuitActive = true;
                 chasing = true;
+                currentPath.clear();
                 chasePlayer(playerX, playerY, map, tileSize);
             } else {
                 chasing = false;
-                walk(map, tileSize);
+                wander(map, tileSize);
             }
         }
+    }
+
+    /**
+     * True if the monster's facing direction points roughly toward the
+     * player — used to decide whether an idle monster notices the player.
+     */
+    private boolean isPlayerAhead(double playerX, double playerY) {
+        if (directionX == 0 && directionY == 0) return true;
+        double dx = playerX - x;
+        double dy = playerY - y;
+        double distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance < 1e-3) return true;
+        double ndx = dx / distance;
+        double ndy = dy / distance;
+        double dot = ndx * directionX + ndy * directionY;
+        return dot > 0.3;
+    }
+
+    /** Chase the player by following an A*-computed path toward them. */
+    private void chasePlayer(double playerX, double playerY, int[][] map, int tileSize) {
+        followAStarPath(playerX, playerY, map, tileSize, CHASE_SPEED);
     }
 
     private void followAStarPath(double targetX, double targetY, int[][] map, int tileSize, double speed) {
@@ -150,20 +174,13 @@ public class Monster {
         int targetGridX = (int) (targetX / tileSize);
         int targetGridY = (int) (targetY / tileSize);
 
-    private void chasePlayer(double playerX, double playerY, int[][] map, int tileSize) {
-        double dx = playerX - x;
-        double dy = playerY - y;
-        double distance = Math.sqrt(dx * dx + dy * dy);
-        if (distance < 1e-3) return;
-        // Face the player while chasing, so the front (face) sprite is shown.
-        directionX = dx / distance;
-        directionY = dy / distance;
-        double step = Math.min(CHASE_SPEED, distance);
-        double nextX = x + dx / distance * step;
-        double nextY = y + dy / distance * step;
-        if (!collides(nextX, y, map, tileSize)) x = nextX;
-        if (!collides(x, nextY, map, tileSize)) y = nextY;
-    }
+        long currentTime = System.currentTimeMillis();
+
+        // Only allow a path recalculation while roughly centered on the
+        // current tile, so the monster doesn't jitter mid-step.
+        double tileCenterX = currentGridX * tileSize + tileSize / 2.0;
+        double tileCenterY = currentGridY * tileSize + tileSize / 2.0;
+        boolean nearCenter = Math.abs(x - tileCenterX) < 4.0 && Math.abs(y - tileCenterY) < 4.0;
 
         if (currentPath == null || currentPath.isEmpty() || (nearCenter && currentTime - lastPathCalculationTime > 500)) {
             currentPath = Pathfinder.findPath(map, currentGridX, currentGridY, targetGridX, targetGridY);
@@ -172,7 +189,7 @@ public class Monster {
 
         if (currentPath != null && !currentPath.isEmpty()) {
             Pathfinder.Node nextNode = currentPath.get(0);
-            
+
             double destX = nextNode.gridX * tileSize + tileSize / 2.0;
             double destY = nextNode.gridY * tileSize + tileSize / 2.0;
 
