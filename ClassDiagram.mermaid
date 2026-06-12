@@ -1,0 +1,236 @@
+classDiagram
+    direction LR
+
+    %% ===================== JDK / framework types =====================
+    class JPanel
+    class KeyAdapter
+    class ActionListener
+    class Runnable
+
+    %% ===================== Entry point =====================
+    class Main {
+        +main(String[] args) void
+    }
+
+    %% ===================== UI panels =====================
+    class LobbyPanel {
+        -JFrame frame
+        -JTextField ipField
+        -JLabel statusLabel
+        +LobbyPanel(JFrame frame)
+        -startSinglePlayer() void
+        -hostGame() void
+        -connectToServer(String ip) void
+        -switchToGame(GamePanel panel) void
+        -showLobby() void
+    }
+
+    class GamePanel {
+        +int WIDTH
+        +int HEIGHT
+        +int TILE_SIZE
+        +LevelConfig config
+        +int[][] map
+        +double playerX
+        +double playerY
+        +double playerAngle
+        +List~Monster~ monsters
+        +Door door
+        +List~Ball~ balls
+        +NetworkClient networkClient
+        +RemotePlayer remotePlayer
+        +boolean paused
+        +boolean gameOverMenu
+        +boolean remotePlayerLeft
+        +GamePanel()
+        +GamePanel(NetworkClient client)
+        +startGame() void
+        +setReturnToMenuAction(Runnable r) void
+        -updateSinglePlayer(long dt) void
+        -updateMultiplayer(long dt) void
+        -applyMovement(long dt) void
+        -togglePauseMenu() void
+        -returnToMenu() void
+        -generateRandomMap() void
+    }
+
+    class InputAdapter {
+        +keyPressed(KeyEvent e) void
+        +keyReleased(KeyEvent e) void
+    }
+
+    class Renderer {
+        -GamePanel game
+        -BufferedImage screenBuffer
+        -String localIP
+        +render(Graphics g) void
+        -drawScene(Graphics g) void
+        -drawMinimap(Graphics g) void
+        -drawHUD(Graphics g) void
+        -drawIPLabel(Graphics g) void
+        -drawPauseMenu(Graphics g) void
+        -drawGameOverMenu(Graphics g) void
+        -castRay(double angle) RayHit
+    }
+
+    %% ===================== Networking =====================
+    class GameServer {
+        +int PORT
+        -int[][] map
+        -Door door
+        -List~Ball~ balls
+        -List~Monster~ monsters
+        -PrintWriter[] writers
+        -double[][] playerPos
+        +run() void
+        +serve() void
+        -loadLevel(int idx) void
+        -updateGame(long dt) void
+        -sendState() void
+        -readClient(Socket s, int id) void
+    }
+
+    class NetworkClient {
+        +int myPlayerId
+        +int levelIdx
+        +int[][] serverMap
+        +List~double[]~ serverBalls
+        +double remotePlayerX
+        +double remotePlayerY
+        +double remotePlayerAngle
+        +boolean remotePlayerLeft
+        +double[] monsterX
+        +double[] monsterY
+        +boolean[] monsterChasing
+        +long serverTimeMs
+        +Queue~int[]~ diamondsTaken
+        +connect(String host, int port, Runnable onWaiting) void
+        +sendPosition(double x, double y, double angle) void
+        +disconnect() void
+        -readLoop() void
+        -parseState(String data) void
+    }
+
+    class RemotePlayer {
+        +double x
+        +double y
+        +double angle
+        +String label
+    }
+
+    %% ===================== Game objects =====================
+    class Monster {
+        -double x
+        -double y
+        -boolean chasing
+        -boolean pursuitActive
+        +Monster(int tileX, int tileY, int tileSize)
+        +update(double px, double py, int[][] map, int tileSize) void
+        +collidesWithPlayer(double px, double py, int tileSize) boolean
+        +canSeePlayer(double px, double py, int[][] map, int tileSize) boolean
+        +drawOnMinimap(Graphics g, int ox, int oy, int cell) void
+        +setPosition(double x, double y) void
+        +setChasing(boolean c) void
+    }
+
+    class Ball {
+        +double x
+        +double y
+        +Ball(double x, double y)
+    }
+
+    class Door {
+        +int DOOR_TILE
+        -int tileX
+        -int tileY
+        -boolean open
+        +Door(int tileX, int tileY)
+        +isOpen() boolean
+        +open() void
+        +close() void
+        +isAt(int x, int y) boolean
+        +getMapValue() int
+    }
+
+    %% ===================== Config & helpers =====================
+    class LevelConfig {
+        +LevelConfig[] ALL
+        +int level
+        +int mapSize
+        +int objectiveCount
+        +long timeLimitMillis
+        +int monsterCount
+        +isLast() boolean
+    }
+
+    class MazeGenerator {
+        +generateMaze(int size, int sx, int sy, int ex, int ey) int[][]
+        -carveMaze(int[][] map, int x, int y, Random r) void
+        -isReachable(int[][] map, int sx, int sy, int tx, int ty) boolean
+        -carveStraightPath(int[][] map, int sx, int sy, int tx, int ty) void
+    }
+
+    class RayHit {
+        +double distance
+        +int wallType
+        +int textureX
+        +int side
+        +int[][] texture
+    }
+
+    class Textures {
+        +int[][] BRICK
+        +int[][] WOOD
+        +int[][] STONE
+        +int[][] DOOR
+        +int[][] DOOR_OPEN
+        +int[][] MARBLE
+    }
+
+    class SoundPlayer {
+        +playDing() void
+        +playFootstep() void
+        +playVictoryMusic() void
+        +updateMonsterSound(double pan, double vol) void
+        +stopMonsterSound() void
+    }
+
+    %% ===================== Relationships =====================
+    Main ..> LobbyPanel : creates
+
+    LobbyPanel --|> JPanel
+    LobbyPanel ..> GamePanel : creates / switches to
+    LobbyPanel ..> GameServer : starts on daemon thread
+    LobbyPanel ..> NetworkClient : creates & connects
+
+    GamePanel --|> JPanel
+    GamePanel ..|> ActionListener
+    GamePanel *-- Renderer : owns
+    GamePanel o-- "0..1" NetworkClient : multiplayer link
+    GamePanel o-- "0..1" RemotePlayer : tracks partner
+    GamePanel *-- "0..*" Monster : spawns
+    GamePanel *-- "1" Door : owns
+    GamePanel *-- "0..*" Ball : owns
+    GamePanel --> LevelConfig : reads level config
+    GamePanel *-- InputAdapter : inner class
+    GamePanel ..> MazeGenerator : generates map
+    GamePanel ..> SoundPlayer : plays audio
+
+    InputAdapter --|> KeyAdapter
+
+    Renderer --> GamePanel : reads game state each frame
+    Renderer ..> RayHit : creates per ray cast
+    Renderer ..> Textures : samples wall textures
+    Renderer ..> Door : reads open/closed state
+    Renderer ..> Monster : draws sprite & minimap
+    Renderer ..> Ball : draws sprite
+    Renderer ..> RemotePlayer : draws partner sprite
+
+    GameServer ..|> Runnable
+    GameServer ..> MazeGenerator : generates map
+    GameServer *-- "0..*" Monster : simulates AI
+    GameServer *-- "0..*" Ball : tracks diamonds
+    GameServer *-- "1" Door : tracks exit
+    GameServer --> LevelConfig : reads level config
+
+    NetworkClient ..> RemotePlayer : provides synced data for
