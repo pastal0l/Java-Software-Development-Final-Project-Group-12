@@ -1,0 +1,45 @@
+classDiagram
+    direction TB
+
+    class Main
+    class LobbyPanel
+    class GamePanel {
+        +map
+        +playerX, playerY
+        +monsters
+        +door
+        +balls
+        +remotePlayer
+    }
+    class Renderer
+    class GameServer
+    class NetworkClient
+    class RemotePlayer
+    class Monster
+    class Ball
+    class Door
+    class LevelConfig
+    class MazeGenerator
+
+    Main --> LobbyPanel : opens
+
+    LobbyPanel --> GamePanel : starts game
+    LobbyPanel --> GameServer : hosts (multiplayer)
+    LobbyPanel --> NetworkClient : connects (multiplayer)
+
+    GamePanel --> Renderer : draws via
+    GamePanel --> NetworkClient : syncs with (multiplayer)
+    GamePanel --> RemotePlayer : shows partner
+    GamePanel --> Monster : contains
+    GamePanel --> Ball : contains
+    GamePanel --> Door : contains
+    GamePanel --> LevelConfig : uses settings from
+    GamePanel --> MazeGenerator : generates map with
+
+    GameServer --> Monster : simulates
+    GameServer --> Ball : tracks
+    GameServer --> Door : tracks
+    GameServer --> MazeGenerator : generates map with
+    GameServer --> LevelConfig : uses settings from
+
+    NetworkClient --> RemotePlayer : updates

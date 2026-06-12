@@ -42,7 +42,7 @@ public class GamePanel extends JPanel implements ActionListener {
     static final int    WIDTH     = 800;
     static final int    HEIGHT    = 600;
     static final int    TILE_SIZE = 64;
-    static final int    TEX_SIZE  = 64;
+    static final int    TEX_SIZE  = 256;
 
     private static final int    FPS                  = 60;
     private static final double MOVE_SPEED           = 3.5;
@@ -419,7 +419,10 @@ public class GamePanel extends JPanel implements ActionListener {
 
         // 7. Local player movement (client-authoritative; skipped while pause menu is open)
         if (!paused) applyMovement(deltaTime);
-        updateMonsterAudio();
+        // Don't re-trigger/update the monster sound while the pause menu is open —
+        // togglePauseMenu() already muted it, and the update loop keeps running
+        // in multiplayer even when paused.
+        if (!paused) updateMonsterAudio();
 
         // 8. Send position to server
         nc.sendPosition(playerX, playerY, playerAngle);
@@ -433,8 +436,12 @@ public class GamePanel extends JPanel implements ActionListener {
         if (turnRight) playerAngle += ROTATE_SPEED;
 
         // --- Stamina / exhaustion ---
+        // Only drain stamina while actually sprinting (SHIFT held *and* the
+        // player is pressing a movement key) — holding SHIFT while standing
+        // still shouldn't cost stamina.
+        boolean movementKeyHeld = moveForward || moveBackward || strafeLeft || strafeRight;
         double dt = deltaTime / 1000.0;   // convert ms → seconds
-        if (shiftHeld && !exhausted && stamina > 0) {
+        if (shiftHeld && movementKeyHeld && !exhausted && stamina > 0) {
             sprinting = true;
             stamina  -= STAMINA_DRAIN * dt;
             if (stamina <= 0) {
@@ -706,6 +713,10 @@ public class GamePanel extends JPanel implements ActionListener {
         pauseMenuSelected = 0;
         if (paused) {
             disableMouseCapture();
+            // Mute the looping monster sound immediately — it plays on its own
+            // audio thread and would otherwise keep running even though the
+            // game timer (single-player) or update loop (multiplayer) is paused.
+            SoundPlayer.stopMonsterSound();
             if (networkClient == null) timer.stop();   // freeze single-player
         } else {
             if (networkClient == null) {

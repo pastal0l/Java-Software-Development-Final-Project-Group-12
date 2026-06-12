@@ -60,16 +60,49 @@ class Renderer {
 
         int horizon    = height / 2;
         int skyColor   = (18 << 16) | (24 << 8) | 60;
-        int floorColor = (16 << 16) | (20 << 8) | 32;
+        int floorColor = (46 << 16) | (94 << 8) | 42; // grassy green
+
+        // Stars drift sideways as the player turns, so the sky feels like a
+        // distant dome rather than a flat backdrop painted on the screen.
+        int starShift = (int) (game.playerAngle * 300.0);
 
         int row = 0;
         for (int y = 0; y < horizon; y++) {
             int off = row++ * width;
-            for (int x = 0; x < width; x++) screenPixels[off + x] = skyColor;
+            for (int x = 0; x < width; x++) {
+                int color = skyColor;
+                // Cheap deterministic hash -> sparse twinkling stars, kept away
+                // from the horizon so they don't clutter the skyline.
+                int hash = (x + starShift) * 374761393 + y * 668265263;
+                hash = (hash ^ (hash >> 13)) * 1274126177;
+                hash ^= (hash >>> 16);
+                int twinkle = hash & 0x3FF; // 0..1023
+                if (y < horizon - horizon / 8) {
+                    if (twinkle == 0)      color = 0xFFFFFF; // bright star
+                    else if (twinkle < 4)  color = 0x9AA0C8; // dim star
+                }
+                screenPixels[off + x] = color;
+            }
         }
+
+        drawMoon(screenPixels, width, height, horizon, skyColor);
+
         for (int y = horizon; y < height; y++) {
+            // Darker/hazier near the horizon, full brightness close to the player.
+            double t = (height == horizon) ? 1.0 : (y - horizon) / (double) (height - horizon);
+            int baseColor = shadeColor(floorColor, 0.45 + 0.55 * t);
             int off = row++ * width;
-            for (int x = 0; x < width; x++) screenPixels[off + x] = floorColor;
+            for (int x = 0; x < width; x++) {
+                // Speckled grass-blade texture via a cheap per-pixel hash.
+                int hash = x * 374761393 + y * 668265263;
+                hash = (hash ^ (hash >> 13)) * 1274126177;
+                hash ^= (hash >>> 16);
+                int speck = hash & 0xFF;
+                int color = baseColor;
+                if (speck < 10)       color = shadeColor(baseColor, 1.30); // light blade highlight
+                else if (speck > 246) color = shadeColor(baseColor, 0.65); // dark soil speck
+                screenPixels[off + x] = color;
+            }
         }
 
         double fov        = Math.toRadians(60);
@@ -95,9 +128,19 @@ class Renderer {
                 int px = screenX + xOff;
                 if (px < 0 || px >= width) continue;
                 for (int y = drawStart; y <= drawEnd; y++) {
-                    int texY  = Math.max(0, Math.min(TEX_SIZE - 1,
-                            (int) (((y - lineOffset) * TEX_SIZE) / (double) lineHeight)));
-                    int color = hit.texture[hit.textureX][texY];
+                    // Sample the texture column at a fractional row and blend
+                    // between the two nearest texels (bilinear filtering).
+                    // Without this, a wall that fills most of the screen stretches
+                    // each texel row into a large flat band, producing harsh
+                    // horizontal stripes ("stretched"/blocky) at close range.
+                    double texYf = ((y - lineOffset) * TEX_SIZE) / (double) lineHeight;
+                    texYf = Math.max(0, Math.min(TEX_SIZE - 1, texYf));
+                    int texY0 = (int) texYf;
+                    int texY1 = Math.min(TEX_SIZE - 1, texY0 + 1);
+                    double frac = texYf - texY0;
+                    int colA = hit.texture[hit.textureX][texY0];
+                    int colB = hit.texture[hit.textureX][texY1];
+                    int color = lerpColor(colA, colB, frac);
                     if (!(hit.wallType == Door.DOOR_TILE && game.isExitOpen())) {
                         if (hit.side == 1) color = shadeColor(color, 0.70);
                         color = shadeColor(color,
@@ -114,6 +157,51 @@ class Renderer {
         g.drawImage(screenBuffer, 0, 0, null);
         drawAllMonsterSprites(g, width, height);
         drawRemotePlayerSprite(g, width, height);
+    }
+
+    /**
+     * Draws a crescent moon at a fixed point in the world's "sky dome".
+     * As the player turns, the moon slides across the sky and off-screen
+     * rather than staying glued to one spot on the display.
+     */
+    private void drawMoon(int[] pixels, int width, int height, int horizon, int skyColor) {
+        double moonWorldAngle = Math.toRadians(120); // fixed direction in the world
+        double skySpan        = Math.toRadians(180); // arc of sky the moon travels across
+        double relAngle       = normalizeAngle(moonWorldAngle - game.playerAngle);
+        if (Math.abs(relAngle) > skySpan / 2) return; // moon is behind the player
+
+        int moonRadius  = Math.max(14, height / 16);
+        int glowRadius  = (int) (moonRadius * 1.8);
+        int moonX = (int) (width / 2.0
+                + (relAngle / (skySpan / 2.0)) * (width / 2.0 + glowRadius));
+        int moonY = horizon / 3;
+
+        int moonColor = 0xF4F1D8;
+        int glowColor = 0x9FA6C0;
+
+        // Crescent cutout: an offset circle painted back over with sky color.
+        double crescentX = moonX + moonRadius * 0.45;
+        double crescentY = moonY - moonRadius * 0.25;
+        double crescentR = moonRadius * 0.85;
+
+        int xMin = Math.max(0, moonX - glowRadius);
+        int xMax = Math.min(width - 1, moonX + glowRadius);
+        int yMin = Math.max(0, moonY - glowRadius);
+        int yMax = Math.min(horizon - 1, moonY + glowRadius);
+
+        for (int y = yMin; y <= yMax; y++) {
+            int rowOff = y * width;
+            for (int x = xMin; x <= xMax; x++) {
+                double dist = Math.hypot(x - moonX, y - moonY);
+                if (dist <= moonRadius) {
+                    double craterDist = Math.hypot(x - crescentX, y - crescentY);
+                    pixels[rowOff + x] = (craterDist <= crescentR) ? skyColor : moonColor;
+                } else if (dist <= glowRadius) {
+                    double f = 1.0 - (dist - moonRadius) / (glowRadius - moonRadius);
+                    pixels[rowOff + x] = lerpColor(skyColor, glowColor, f * 0.5);
+                }
+            }
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -146,18 +234,35 @@ class Renderer {
         double spritePerpDist = distance * Math.cos(relativeAngle);
         if (castRayDistance(game.playerAngle + relativeAngle) + 1.0 < spritePerpDist) return;
 
-        int screenX    = (int) (((relativeAngle / (fov / 2)) * 0.5 + 0.5) * width);
-        int spriteSize = Math.max(12, Math.min((int) ((TILE_SIZE * height) / distance * 0.4), 80));
-        int spriteY    = height / 2 - spriteSize / 2;
+        int screenX = (int) (((relativeAngle / (fov / 2)) * 0.5 + 0.5) * width);
 
-        BufferedImage sprite = m.getSprite();
+        // Bigger base size than before so the monster reads clearly up close.
+        int baseSize = Math.max(20, Math.min((int) ((TILE_SIZE * height) / distance * 0.7), 150));
+
+        // Align the monster's feet with the floor edge of the walls at this
+        // distance (same projection walls use) so it doesn't float in midair.
+        int horizon = height / 2;
+        int floorLineHeight = Math.max(1, Math.min((int) ((TILE_SIZE * height) / Math.max(1.0, spritePerpDist)), height));
+        int groundY = horizon + floorLineHeight / 2;
+
+        // "Breathing"/squish animation: widen while shortening and vice versa,
+        // phase-offset by position so multiple monsters don't pulse in sync.
+        double squishPhase = game.floatPhase * 1.5 + (m.getX() + m.getY()) * 0.01;
+        double squish      = Math.sin(squishPhase) * 0.12; // +/-12%
+        int spriteW = (int) Math.round(baseSize * (1.0 + squish));
+        int spriteH = (int) Math.round(baseSize * (1.0 - squish));
+
+        int spriteX = screenX - spriteW / 2;
+        int spriteY = groundY - spriteH;
+
+        BufferedImage sprite = m.getSprite(game.playerX, game.playerY);
         if (sprite != null) {
-            g.drawImage(sprite, screenX - spriteSize / 2, spriteY, spriteSize, spriteSize, null);
+            g.drawImage(sprite, spriteX, spriteY, spriteW, spriteH, null);
         } else {
             g.setColor(new Color(230, 40, 40, 220));
-            g.fillOval(screenX - spriteSize / 2, spriteY, spriteSize, spriteSize);
+            g.fillOval(spriteX, spriteY, spriteW, spriteH);
             g.setColor(Color.BLACK);
-            g.drawOval(screenX - spriteSize / 2, spriteY, spriteSize, spriteSize);
+            g.drawOval(spriteX, spriteY, spriteW, spriteH);
         }
     }
 
@@ -475,9 +580,12 @@ class Renderer {
         g.setColor(new Color(0, 0, 0, 160));
         g.fillRect(0, 0, width, height);
 
-        int numOpts   = game.pauseMenuOptions.length;
-        int boxWidth  = 360;
-        int boxHeight = 56 + numOpts * 42 + 36;
+        int numOpts        = game.pauseMenuOptions.length;
+        int boxWidth       = 460;
+        int titleAreaH     = 130; // space reserved for the title + gap before the first option
+        int optionSpacing  = 58;
+        int bottomPadding  = 50;
+        int boxHeight = titleAreaH + numOpts * optionSpacing + bottomPadding;
         int boxX = width  / 2 - boxWidth  / 2;
         int boxY = height / 2 - boxHeight / 2;
 
@@ -487,18 +595,18 @@ class Renderer {
         g.drawRoundRect(boxX, boxY, boxWidth, boxHeight, 18, 18);
 
         String title = game.networkClient != null ? "PAUSED" : "PAUSED";
-        g.setFont(g.getFont().deriveFont(Font.BOLD, 30f));
+        g.setFont(g.getFont().deriveFont(Font.BOLD, 40f));
         g.setColor(Color.WHITE);
         int tw = g.getFontMetrics().stringWidth(title);
-        g.drawString(title, width / 2 - tw / 2, boxY + 44);
+        g.drawString(title, width / 2 - tw / 2, boxY + 60);
 
-        g.setFont(g.getFont().deriveFont(22f));
+        g.setFont(g.getFont().deriveFont(26f));
         for (int i = 0; i < numOpts; i++) {
             String opt = game.pauseMenuOptions[i];
-            int oy = boxY + 68 + i * 42;
+            int oy = boxY + titleAreaH + i * optionSpacing;
             if (i == game.pauseMenuSelected) {
                 g.setColor(new Color(50, 100, 220));
-                g.fillRoundRect(width / 2 - 130, oy - 27, 260, 34, 10, 10);
+                g.fillRoundRect(width / 2 - 160, oy - 32, 320, 44, 12, 12);
                 g.setColor(Color.WHITE);
             } else {
                 g.setColor(new Color(170, 200, 240));
@@ -635,7 +743,7 @@ class Renderer {
 
         int[][] texture = (wallType == Door.DOOR_TILE)
                 ? (game.isExitOpen() ? Textures.DOOR_OPEN : Textures.DOOR)
-                : Textures.STONE;
+                : Textures.WALL;
         return new RayHit(dist, wallType, textureX, side, texture);
     }
 
@@ -681,6 +789,16 @@ class Renderer {
         int r = (int) Math.max(0, Math.min(255, ((rgb >> 16) & 0xFF) * factor));
         int g = (int) Math.max(0, Math.min(255, ((rgb >>  8) & 0xFF) * factor));
         int b = (int) Math.max(0, Math.min(255, ( rgb        & 0xFF) * factor));
+        return (r << 16) | (g << 8) | b;
+    }
+
+    /** Linearly blends two packed RGB colors; {@code t} in [0,1] (0 = c0, 1 = c1). */
+    private int lerpColor(int c0, int c1, double t) {
+        int r0 = (c0 >> 16) & 0xFF, g0 = (c0 >> 8) & 0xFF, b0 = c0 & 0xFF;
+        int r1 = (c1 >> 16) & 0xFF, g1 = (c1 >> 8) & 0xFF, b1 = c1 & 0xFF;
+        int r = (int) (r0 + (r1 - r0) * t);
+        int g = (int) (g0 + (g1 - g0) * t);
+        int b = (int) (b0 + (b1 - b0) * t);
         return (r << 16) | (g << 8) | b;
     }
 
