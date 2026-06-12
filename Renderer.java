@@ -234,18 +234,35 @@ class Renderer {
         double spritePerpDist = distance * Math.cos(relativeAngle);
         if (castRayDistance(game.playerAngle + relativeAngle) + 1.0 < spritePerpDist) return;
 
-        int screenX    = (int) (((relativeAngle / (fov / 2)) * 0.5 + 0.5) * width);
-        int spriteSize = Math.max(12, Math.min((int) ((TILE_SIZE * height) / distance * 0.4), 80));
-        int spriteY    = height / 2 - spriteSize / 2;
+        int screenX = (int) (((relativeAngle / (fov / 2)) * 0.5 + 0.5) * width);
+
+        // Bigger base size than before so the monster reads clearly up close.
+        int baseSize = Math.max(20, Math.min((int) ((TILE_SIZE * height) / distance * 0.7), 150));
+
+        // Align the monster's feet with the floor edge of the walls at this
+        // distance (same projection walls use) so it doesn't float in midair.
+        int horizon = height / 2;
+        int floorLineHeight = Math.max(1, Math.min((int) ((TILE_SIZE * height) / Math.max(1.0, spritePerpDist)), height));
+        int groundY = horizon + floorLineHeight / 2;
+
+        // "Breathing"/squish animation: widen while shortening and vice versa,
+        // phase-offset by position so multiple monsters don't pulse in sync.
+        double squishPhase = game.floatPhase * 1.5 + (m.getX() + m.getY()) * 0.01;
+        double squish      = Math.sin(squishPhase) * 0.12; // +/-12%
+        int spriteW = (int) Math.round(baseSize * (1.0 + squish));
+        int spriteH = (int) Math.round(baseSize * (1.0 - squish));
+
+        int spriteX = screenX - spriteW / 2;
+        int spriteY = groundY - spriteH;
 
         BufferedImage sprite = m.getSprite(game.playerX, game.playerY);
         if (sprite != null) {
-            g.drawImage(sprite, screenX - spriteSize / 2, spriteY, spriteSize, spriteSize, null);
+            g.drawImage(sprite, spriteX, spriteY, spriteW, spriteH, null);
         } else {
             g.setColor(new Color(230, 40, 40, 220));
-            g.fillOval(screenX - spriteSize / 2, spriteY, spriteSize, spriteSize);
+            g.fillOval(spriteX, spriteY, spriteW, spriteH);
             g.setColor(Color.BLACK);
-            g.drawOval(screenX - spriteSize / 2, spriteY, spriteSize, spriteSize);
+            g.drawOval(spriteX, spriteY, spriteW, spriteH);
         }
     }
 
