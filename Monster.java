@@ -22,8 +22,10 @@ public class Monster {
     private double directionY;
     private boolean chasing;
     private boolean pursuitActive;
-    private BufferedImage spriteIdle = null;
-    private BufferedImage spriteChase = null;
+    /** Shown when the monster is facing the player — its "face". */
+    private BufferedImage spriteFront = null;
+    /** Shown when the monster's back is toward the player — safe to pass. */
+    private BufferedImage spriteBack = null;
 
     public Monster(int tileX, int tileY, int tileSize) {
         this.tileSize = tileSize;
@@ -47,23 +49,46 @@ public class Monster {
     }
 
     private void loadSprites() {
-        String[] names = {"assets/monster.png", "asset/monster.png", "monster.png"};
+        spriteFront = loadFirst("asset/monster_front.png", "assets/monster_front.png", "monster_front.png");
+        spriteBack  = loadFirst("asset/monster_back.png", "assets/monster_back.png", "monster_back.png");
+        // Fall back to whichever sprite is available if only one exists, so the
+        // monster still renders even if one of the two images is missing.
+        if (spriteFront == null) spriteFront = spriteBack;
+        if (spriteBack  == null) spriteBack  = spriteFront;
+    }
+
+    private BufferedImage loadFirst(String... names) {
         for (String n : names) {
             try {
                 File f = new File(n);
-                if (f.exists()) {
-                    if (spriteIdle == null) spriteIdle = ImageIO.read(f);
-                    if (spriteChase == null) spriteChase = ImageIO.read(f);
-                }
+                if (f.exists()) return ImageIO.read(f);
             } catch (IOException ignored) {
             }
         }
-        if (spriteIdle != null && spriteChase == null) spriteChase = spriteIdle;
+        return null;
     }
 
-    public BufferedImage getSprite() {
-        if (chasing) return spriteChase != null ? spriteChase : spriteIdle;
-        return spriteIdle;
+    /**
+     * Returns the sprite to draw from the player's point of view: the
+     * monster's front (face) if it's oriented toward the player, or its
+     * back if it's oriented away — signalling it's safe to walk past.
+     */
+    public BufferedImage getSprite(double playerX, double playerY) {
+        return isFacingPlayer(playerX, playerY) ? spriteFront : spriteBack;
+    }
+
+    /**
+     * True if the monster's facing direction points roughly toward the
+     * player (its front/face is visible to them).
+     */
+    private boolean isFacingPlayer(double playerX, double playerY) {
+        if (directionX == 0 && directionY == 0) return true;
+        double dx = playerX - x;
+        double dy = playerY - y;
+        double distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance < 1e-3) return true;
+        double dot = (dx / distance) * directionX + (dy / distance) * directionY;
+        return dot > 0;
     }
 
     public void update(double playerX, double playerY, int[][] map, int tileSize) {
@@ -74,15 +99,16 @@ public class Monster {
         double distance = Math.sqrt(dx * dx + dy * dy);
 
         // Behavior rules:
-        // - If already in pursuit, continue chasing solely based on distance (persistence).
+        // - If already in pursuit, keep chasing only while the player stays
+        //   visible (line of sight) and within range — lose interest the
+        //   moment the player breaks line of sight (e.g. ducks behind a wall).
         // - If idle, only start chasing when the player is visible and roughly ahead.
         if (pursuitActive) {
-            // Continue chasing until player is far enough to give up.
-            if (distance <= MAX_CHASE_DISTANCE) {
+            if (visible && distance <= MAX_CHASE_DISTANCE) {
                 chasing = true;
                 chasePlayer(playerX, playerY, map, tileSize);
             } else {
-                // Lost due to distance; stop chasing and resume wandering.
+                // Lost sight of the player (or they're too far); give up and resume wandering.
                 pursuitActive = false;
                 chasing = false;
                 walk(map, tileSize);
@@ -117,6 +143,9 @@ public class Monster {
         double dy = playerY - y;
         double distance = Math.sqrt(dx * dx + dy * dy);
         if (distance < 1e-3) return;
+        // Face the player while chasing, so the front (face) sprite is shown.
+        directionX = dx / distance;
+        directionY = dy / distance;
         double step = Math.min(CHASE_SPEED, distance);
         double nextX = x + dx / distance * step;
         double nextY = y + dy / distance * step;
