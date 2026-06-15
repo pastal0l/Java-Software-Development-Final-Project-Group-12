@@ -1,6 +1,8 @@
 import javax.swing.JFrame;
 import javax.swing.SwingUtilities;
 
+import UI.LobbyPanel;
+
 /**
  * Main: entry point for the Pseudo-3D Raycaster game.
  *
