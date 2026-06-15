@@ -1,346 +1,92 @@
 package UI;
-import javax.swing.JPanel;
-import javax.swing.SwingUtilities;
-import javax.swing.Timer;
 
 import audio.SoundPlayer;
-import domain.Ball;
-import domain.Door;
-import domain.LevelConfig;
 import entity.MonsterEntity;
 import network.NetworkClient;
 import network.RemotePlayer;
 import rendering.Renderer;
-import world.MazeGenerator;
 
-import java.awt.AWTException;
-import java.awt.Color;
-import java.awt.Cursor;
-import java.awt.Dimension;
-import java.awt.Graphics;
-import java.awt.Point;
-import java.awt.Robot;
-import java.awt.Toolkit;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
-import java.awt.event.FocusAdapter;
-import java.awt.event.FocusEvent;
-import java.awt.event.KeyAdapter;
-import java.awt.event.KeyEvent;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
-import java.awt.event.MouseMotionAdapter;
-import java.awt.image.BufferedImage;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Random;
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.*;
 
-/**
- * GamePanel owns all game state and drives the update loop.
- * Rendering is delegated to {@link Renderer}.
- *
- * <p>Turning uses mouse look: horizontal mouse movement rotates the player,
- * and the cursor is captured (hidden + re-centered via {@link Robot}) during
- * active gameplay.  The cursor reappears on the game-over menu and when the
- * window loses focus.</p>
- *
- * Fields use package-private access so Renderer can read them each frame.
- */
 public class GamePanel extends JPanel implements ActionListener {
 
-    // -----------------------------------------------------------------------
-    // Constants — never change across levels
-    // -----------------------------------------------------------------------
-    public static final int    WIDTH     = 800;
-    public static final int    HEIGHT    = 600;
-    public static final int    TILE_SIZE = 64;
-    public static final int    TEX_SIZE  = 64;
+    public static final int WIDTH     = 800;
+    public static final int HEIGHT    = 600;
+    public static final int TILE_SIZE = 64;
+    public static final int TEX_SIZE  = 64;
 
-    private static final int    FPS                  = 60;
-    private static final double MOVE_SPEED           = 3.5;
-    private static final double SPRINT_SPEED         = 6.5;
-    private static final double ROTATE_SPEED         = Math.toRadians(3.5); // arrow-key fallback
-    private static final double MOUSE_SENSITIVITY    = 0.0025;              // radians per pixel
-    private static final int    FOOTSTEP_INTERVAL_MS = 300;
-    private static final int    SPRINT_FOOTSTEP_MS   = 160;
+    private static final int FPS = 60;
 
-    // Stamina — all rates are per second
-    public static final double  MAX_STAMINA               = 100.0;
-    private static final double STAMINA_DRAIN      = 25.0;  // depleted per second while sprinting
-    private static final double STAMINA_REGEN      = 12.5;  // restored per second while resting
-    private static final double STAMINA_EXHAUST_THRESHOLD = 20.0; // stamina needed to sprint again after exhaustion
+    // Owned objects
+    public  GameState        state;
+    public  PlayerController player;
+    public  InputHandler     input;
+    public  NetworkClient    networkClient = null;
+    public  RemotePlayer     remotePlayer  = null;
 
-    // -----------------------------------------------------------------------
-    // Fixed spawn positions
-    // -----------------------------------------------------------------------
-    public final int startTileX = 1;
-    public final int startTileY = 1;
-
-    // -----------------------------------------------------------------------
-    // Per-level config (package-private — read by Renderer)
-    // -----------------------------------------------------------------------
-    public LevelConfig config;
-    public int         exitTileX;
-    public int         exitTileY;
-
-    // -----------------------------------------------------------------------
-    // Game state (package-private — read by Renderer each frame)
-    // -----------------------------------------------------------------------
-    public int[][]             map;
-
-    public double              playerX;
-    public double              playerY;
-    public double              playerAngle;
-    /** Effective sprint state — true only when SHIFT held, not exhausted, and stamina > 0. */
-    public boolean             sprinting = false;
-    /** Current stamina in [0, MAX_STAMINA]. */
-    public double              stamina   = MAX_STAMINA;
-    /** True while stamina is recovering after full exhaustion. Sprint is locked until
-     *  stamina reaches {@code STAMINA_EXHAUST_THRESHOLD}. */
-    public boolean             exhausted = false;
-
-    public final List<MonsterEntity> monsters = new ArrayList<>();
-    public Door                door;
-    public final List<Ball>    balls    = new ArrayList<>();
-
-    public boolean             gameOverMenu       = false;
-    public boolean             victory            = false;
-    public boolean             levelComplete      = false;
-    public int                 selectedMenuOption = 0;
-    public String[]            menuOptions        = {"Restart", "Quit"};
-
-    // Pause menu (ESC)
-    public boolean             paused             = false;
-    public int                 pauseMenuSelected  = 0;
-    public String[]            pauseMenuOptions   = {"Resume", "Back to Menu"};
-
-    /** Set when the remote co-op partner disconnects mid-game. */
-    public boolean             remotePlayerLeft   = false;
-
-    public long                remainingTimeMillis;
-    public double              floatPhase = 0;
-
-    // -----------------------------------------------------------------------
-    // Private — movement flags
-    // -----------------------------------------------------------------------
-    private boolean moveForward, moveBackward, strafeLeft, strafeRight;
-    private boolean turnLeft, turnRight;     // keyboard fallback (arrow keys)
-    private boolean shiftHeld = false;       // raw SHIFT key; sprinting = derived from this
-
-    // -----------------------------------------------------------------------
-    // Private — mouse look
-    // -----------------------------------------------------------------------
-    /**
-     * Horizontal mouse delta accumulated each frame (radians).
-     * Written by the mouse listener; consumed and reset in applyMovement().
-     */
-    private double  mouseDeltaX  = 0;
-    /** True while Robot is re-centering the cursor — ignore that one event. */
-    private boolean recentering  = false;
-    private Robot   robot;           // null if AWTException during init
-    private Cursor  blankCursor;
-
-    // -----------------------------------------------------------------------
-    // Private — misc
-    // -----------------------------------------------------------------------
-    private boolean victoryMusicPlayed = false;
-    private long    lastUpdateTime     = System.currentTimeMillis();
-    private long    lastFootstepTime   = 0;
-    private int     currentLevelIndex  = 0;
-
-    private final Random   random;
-    private final Timer    timer;
     private final Renderer renderer;
-
-    /** Non-null in multiplayer — drives shared game state from the server. */
-    public NetworkClient networkClient = null;
-    /** Non-null in multiplayer — the other player's world position. */
-    public RemotePlayer  remotePlayer  = null;
-
-    /** Called on the EDT when the player chooses "Back to Menu". */
+    private final Timer    timer;
+    private long   lastUpdateTime = System.currentTimeMillis();
     private Runnable returnToMenuAction;
 
-    // -----------------------------------------------------------------------
-    // Constructors
-    // -----------------------------------------------------------------------
+    // ── Constructors ─────────────────────────────────────────────────────
 
-    /** Single-player: generates a fresh Level-1 maze locally. */
-    public GamePanel() {
-        this(null);
-    }
+    public GamePanel() { this(null); }
 
-    /**
-     * Shared constructor.  Pass a connected {@link NetworkClient} for online
-     * co-op; pass {@code null} for single-player.
-     */
     public GamePanel(NetworkClient client) {
         setPreferredSize(new Dimension(WIDTH, HEIGHT));
-        setOpaque(true);
         setBackground(Color.BLACK);
         setFocusable(true);
-        addKeyListener(new InputAdapter());
 
-        random        = new Random();
         networkClient = client;
+        input = new InputHandler(this);
 
         if (client == null) {
-            // ── Single-player ─────────────────────────────────────────────
-            config    = LevelConfig.ALL[0];
-            exitTileX = config.mapSize - 1;
-            exitTileY = config.mapSize - 1;
-            generateRandomMap();
-            door = new Door(exitTileX, exitTileY);
-            spawnMonsters(config.monsterCount);
-            spawnBalls(config.objectiveCount);
+            state = new GameState(0);
         } else {
-            // ── Multiplayer — map & balls come from the server ─────────────
-            config    = LevelConfig.ALL[client.levelIdx];
-            exitTileX = config.mapSize - 1;
-            exitTileY = config.mapSize - 1;
-            map       = client.serverMap;
-            door      = new Door(exitTileX, exitTileY);
-            spawnMonsters(config.monsterCount);   // positions overridden by server
-            balls.clear();
-            for (double[] bp : client.serverBalls) balls.add(new Ball(bp[0], bp[1]));
-            remotePlayer = new RemotePlayer(
-                "P" + (client.myPlayerId == 0 ? 2 : 1));
+            state = new GameState(client, 0);   // multiplayer constructor
+            remotePlayer = new RemotePlayer("P" + (client.myPlayerId == 0 ? 2 : 1));
         }
 
-        playerX     = startTileX * TILE_SIZE + TILE_SIZE / 2.0;
-        playerY     = startTileY * TILE_SIZE + TILE_SIZE / 2.0;
-        playerAngle = Math.toRadians(45);
+        double startX = GameState.START_TILE_X * TILE_SIZE + TILE_SIZE / 2.0;
+        double startY = GameState.START_TILE_Y * TILE_SIZE + TILE_SIZE / 2.0;
+        player = new PlayerController(state, startX, startY, Math.toRadians(45));
 
-        remainingTimeMillis = config.timeLimitMillis;
+        addKeyListener(new InputKeyAdapter());
+        addFocusListener(new FocusAdapter() {
+            @Override public void focusGained(FocusEvent e) {
+                if (!state.gameOverMenu) input.enableMouseCapture();
+            }
+            @Override public void focusLost(FocusEvent e) { input.disableMouseCapture(); }
+        });
+
         renderer = new Renderer(this);
         timer    = new Timer(1000 / FPS, this);
-
-        initMouseCapture();
     }
 
-    // -----------------------------------------------------------------------
-    // Public API
-    // -----------------------------------------------------------------------
+    // ── Public API ────────────────────────────────────────────────────────
 
     public void startGame() {
         lastUpdateTime = System.currentTimeMillis();
         timer.start();
-        enableMouseCapture();
+        input.enableMouseCapture();
     }
 
-    public void requestFocusForInput() {
-        requestFocusInWindow();
-    }
+    public void setReturnToMenuAction(Runnable action) { returnToMenuAction = action; }
 
-    /** Set by LobbyPanel so "Back to Menu" can navigate home without System.exit(). */
-    public void setReturnToMenuAction(Runnable action) {
-        returnToMenuAction = action;
-    }
-
-    // -----------------------------------------------------------------------
-    // Mouse capture setup (called once in constructor)
-    // -----------------------------------------------------------------------
-
-    /**
-     * Creates the {@link Robot}, blank cursor, and installs mouse/focus
-     * listeners.  Safe to call before the window is visible.
-     */
-    private void initMouseCapture() {
-        try {
-            robot = new Robot();
-        } catch (AWTException e) {
-            // Robot unavailable — arrow keys remain as the only turning method.
-            robot = null;
-        }
-
-        // Transparent 1×1 cursor used to hide the OS pointer during gameplay
-        BufferedImage cursorImg = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
-        blankCursor = Toolkit.getDefaultToolkit()
-                             .createCustomCursor(cursorImg, new Point(0, 0), "blank");
-
-        // Track horizontal mouse movement for rotation
-        addMouseMotionListener(new MouseMotionAdapter() {
-            @Override public void mouseMoved(MouseEvent e)   { onMouseMoved(e.getX(), e.getY()); }
-            @Override public void mouseDragged(MouseEvent e) { onMouseMoved(e.getX(), e.getY()); }
-        });
-
-        // Hide/show cursor when window focus changes
-        addFocusListener(new FocusAdapter() {
-            @Override
-            public void focusGained(FocusEvent e) {
-                if (!gameOverMenu && !levelComplete) enableMouseCapture();
-            }
-            @Override
-            public void focusLost(FocusEvent e) {
-                disableMouseCapture();
-            }
-        });
-
-        // Click inside the panel to recapture focus (e.g. after alt-tabbing back)
-        addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                requestFocusInWindow();
-            }
-        });
-    }
-
-    /** Hide cursor and start re-centering on each move. */
-    private void enableMouseCapture() {
-        if (!isShowing()) return;
-        setCursor(blankCursor);
-        recenterMouse();
-    }
-
-    /** Restore the default system cursor. */
-    private void disableMouseCapture() {
-        setCursor(Cursor.getDefaultCursor());
-    }
-
-    /**
-     * Move the OS cursor to the panel's centre so it never hits the edge.
-     * Sets {@link #recentering} so the resulting {@code mouseMoved} event
-     * is ignored.
-     */
-    private void recenterMouse() {
-        if (robot == null || !isShowing()) return;
-        try {
-            Point loc = getLocationOnScreen();
-            recentering = true;
-            robot.mouseMove(loc.x + getWidth() / 2, loc.y + getHeight() / 2);
-        } catch (Exception ignored) {}
-    }
-
-    /**
-     * Handle a raw mouse-position event.  Computes the delta from the panel
-     * centre, adds it to {@link #mouseDeltaX}, then re-centres.
-     */
-    private void onMouseMoved(int mouseX, int mouseY) {
-        // Skip the synthetic event that Robot fires after re-centering
-        if (recentering) { recentering = false; return; }
-        if (gameOverMenu || levelComplete || paused) return;
-
-        int dx = mouseX - getWidth()  / 2;
-        mouseDeltaX += dx * MOUSE_SENSITIVITY;
-        recenterMouse();
-    }
-
-    // -----------------------------------------------------------------------
-    // Game loop
-    // -----------------------------------------------------------------------
+    // ── Game loop ─────────────────────────────────────────────────────────
 
     @Override
     public void actionPerformed(ActionEvent e) {
-        long now       = System.currentTimeMillis();
-        long deltaTime = Math.max(1, now - lastUpdateTime);
+        long now  = System.currentTimeMillis();
+        long dt   = Math.max(1, now - lastUpdateTime);
         lastUpdateTime = now;
-        updatePlayer(deltaTime);
-        floatPhase += 0.08;
+        update(dt);
+        state.floatPhase += 0.08;
         repaint();
     }
-
-    // -----------------------------------------------------------------------
-    // Rendering (delegated)
-    // -----------------------------------------------------------------------
 
     @Override
     protected void paintComponent(Graphics g) {
@@ -348,461 +94,224 @@ public class GamePanel extends JPanel implements ActionListener {
         renderer.render(g);
     }
 
-    // -----------------------------------------------------------------------
-    // Update logic
-    // -----------------------------------------------------------------------
+    // ── Update ────────────────────────────────────────────────────────────
 
-    private void updatePlayer(long deltaTime) {
-        if (levelComplete) return;
-        if (networkClient != null) updateMultiplayer(deltaTime);
-        else                       updateSinglePlayer(deltaTime);
+    private void update(long dt) {
+        if (state.levelComplete) return;
+        if (networkClient != null) updateMultiplayer(dt);
+        else                       updateSinglePlayer(dt);
     }
 
-    // ── Single-player update ────────────────────────────────────────────────
+    private void updateSinglePlayer(long dt) {
+        state.remainingTimeMillis -= dt;
+        if (state.remainingTimeMillis <= 0) { triggerGameOver(false); return; }
 
-    private void updateSinglePlayer(long deltaTime) {
-        remainingTimeMillis -= deltaTime;
-        if (remainingTimeMillis <= 0) {
-            remainingTimeMillis = 0;
-            triggerGameOver(false);
-            return;
-        }
+        player.applyMovement(dt, input);
 
-        applyMovement(deltaTime);
-
-        for (MonsterEntity m : monsters) m.update(playerX, playerY, map, TILE_SIZE);
+        for (MonsterEntity m : state.monsters) m.update(player.playerX, player.playerY, state.map, TILE_SIZE);
         updateMonsterAudio();
 
-        for (MonsterEntity m : monsters) {
-            if (m.collidesWithPlayer(playerX, playerY)) {
+        for (MonsterEntity m : state.monsters) {
+            if (m.collidesWithPlayer(player.playerX, player.playerY)) {
                 SoundPlayer.stopMonsterSound();
                 triggerGameOver(false);
                 return;
             }
         }
 
-        collectBalls();
-        checkExit();
+        state.collectBalls(player.playerX, player.playerY);
+        if (state.checkExit(player.playerX, player.playerY)) {
+            SoundPlayer.playVictoryMusic();
+            triggerGameOver(true);
+        }
     }
 
-    // ── Multiplayer update ─────────────────────────────────────────────────
-
-    private void updateMultiplayer(long deltaTime) {
+    private void updateMultiplayer(long dt) {
         NetworkClient nc = networkClient;
+        state.remainingTimeMillis = nc.serverTimeMs;
 
-        // 1. Use server-authoritative timer
-        remainingTimeMillis = nc.serverTimeMs;
-
-        // 2. Process diamond-collected events from server
-        int[] diamondCoord;
-        while ((diamondCoord = nc.diamondsTaken.poll()) != null) {
-            final int bx = diamondCoord[0], by = diamondCoord[1];
-            balls.removeIf(b -> (int) b.x == bx && (int) b.y == by);
+        int[] dc;
+        while ((dc = nc.diamondsTaken.poll()) != null) {
+            final int bx = dc[0], by = dc[1];
+            state.balls.removeIf(b -> (int) b.x == bx && (int) b.y == by);
             SoundPlayer.playDing();
-            if (balls.isEmpty()) door.open();
+            if (state.balls.isEmpty()) state.door.open();
         }
 
-        // 3. Sync door state
-        if (nc.serverDoorOpen && !door.isOpen()) door.open();
+        if (nc.serverDoorOpen && !state.door.isOpen()) state.door.open();
 
-        // 4. Override monster positions with server values
-        double[]  mx  = nc.monsterX;
-        double[]  my  = nc.monsterY;
+        double[] mx = nc.monsterX, my = nc.monsterY;
         boolean[] mch = nc.monsterChasing;
-        for (int i = 0; i < Math.min(monsters.size(), mx.length); i++) {
-            monsters.get(i).setPosition(mx[i], my[i]);
-            monsters.get(i).setChasing(mch[i]);
+        for (int i = 0; i < Math.min(state.monsters.size(), mx.length); i++) {
+            state.monsters.get(i).setPosition(mx[i], my[i]);
+            state.monsters.get(i).setChasing(mch[i]);
         }
 
-        // 5. Sync remote player position
         if (remotePlayer != null) {
             remotePlayer.x     = nc.remotePlayerX;
             remotePlayer.y     = nc.remotePlayerY;
             remotePlayer.angle = nc.remotePlayerAngle;
         }
 
-        // 6. Game-over signal from server
-        if (nc.gameOver && !levelComplete) {
-            if (nc.remotePlayerLeft) remotePlayerLeft = true;
+        if (nc.gameOver && !state.levelComplete) {
+            if (nc.remotePlayerLeft) state.remotePlayerLeft = true;
             SoundPlayer.stopMonsterSound();
             triggerGameOver(nc.gameWon);
             return;
         }
 
-        // 7. Local player movement (client-authoritative; skipped while pause menu is open)
-        if (!paused) applyMovement(deltaTime);
+        if (!state.paused) player.applyMovement(dt, input);
         updateMonsterAudio();
-
-        // 8. Send position to server
-        nc.sendPosition(playerX, playerY, playerAngle);
+        nc.sendPosition(player.playerX, player.playerY, player.playerAngle);
     }
 
-    private void applyMovement(long deltaTime) {
-        // --- Rotation: mouse delta takes priority; arrow keys as fallback ---
-        playerAngle += mouseDeltaX;
-        mouseDeltaX  = 0;
-        if (turnLeft)  playerAngle -= ROTATE_SPEED;
-        if (turnRight) playerAngle += ROTATE_SPEED;
-
-        // --- Stamina / exhaustion ---
-        double dt = deltaTime / 1000.0;   // convert ms → seconds
-        if (shiftHeld && !exhausted && stamina > 0) {
-            sprinting = true;
-            stamina  -= STAMINA_DRAIN * dt;
-            if (stamina <= 0) {
-                stamina   = 0;
-                exhausted = true;
-                sprinting = false;
-            }
-        } else {
-            sprinting = false;
-            stamina  += STAMINA_REGEN * dt;
-            if (stamina >= MAX_STAMINA) stamina = MAX_STAMINA;
-            if (exhausted && stamina >= STAMINA_EXHAUST_THRESHOLD) exhausted = false;
-        }
-
-        // --- Translation ---
-        double speed = sprinting ? SPRINT_SPEED : MOVE_SPEED;
-        double dx = 0, dy = 0;
-
-        if (moveForward)  { dx += Math.cos(playerAngle) * speed;               dy += Math.sin(playerAngle) * speed; }
-        if (moveBackward) { dx -= Math.cos(playerAngle) * speed;               dy -= Math.sin(playerAngle) * speed; }
-        if (strafeLeft)   { dx += Math.cos(playerAngle - Math.PI / 2) * speed; dy += Math.sin(playerAngle - Math.PI / 2) * speed; }
-        if (strafeRight)  { dx += Math.cos(playerAngle + Math.PI / 2) * speed; dy += Math.sin(playerAngle + Math.PI / 2) * speed; }
-
-        boolean moved = false;
-        if (!collides(playerX + dx, playerY)) { playerX += dx; moved = true; }
-        if (!collides(playerX, playerY + dy)) { playerY += dy; moved = true; }
-
-        if (moved && (moveForward || moveBackward || strafeLeft || strafeRight)) {
-            long now      = System.currentTimeMillis();
-            int  interval = sprinting ? SPRINT_FOOTSTEP_MS : FOOTSTEP_INTERVAL_MS;
-            if (now - lastFootstepTime >= interval) {
-                SoundPlayer.playFootstep();
-                lastFootstepTime = now;
-            }
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Level progression
-    // -----------------------------------------------------------------------
-
-    private void loadLevel(int index) {
-        currentLevelIndex  = index;
-        config             = LevelConfig.ALL[index];
-        exitTileX          = config.mapSize - 1;
-        exitTileY          = config.mapSize - 1;
-
-        levelComplete      = false;
-        gameOverMenu       = false;
-        victory            = false;
-        selectedMenuOption = 0;
-        victoryMusicPlayed = false;
-        sprinting          = false;
-        shiftHeld          = false;
-        stamina            = MAX_STAMINA;
-        exhausted          = false;
-        mouseDeltaX        = 0;
-
-        generateRandomMap();
-        door = new Door(exitTileX, exitTileY);
-        spawnMonsters(config.monsterCount);
-        spawnBalls(config.objectiveCount);
-
-        playerX     = startTileX * TILE_SIZE + TILE_SIZE / 2.0;
-        playerY     = startTileY * TILE_SIZE + TILE_SIZE / 2.0;
-        playerAngle = Math.toRadians(45);
-
-        SoundPlayer.stopMonsterSound();
-        remainingTimeMillis = config.timeLimitMillis;
-        lastFootstepTime    = 0;
-        lastUpdateTime      = System.currentTimeMillis();
-    }
-
-    private void restartGame() {
-        loadLevel(currentLevelIndex);
-        timer.start();
-        enableMouseCapture();
-    }
-
-    private void nextLevel() {
-        loadLevel(currentLevelIndex + 1);
-        timer.start();
-        enableMouseCapture();
-    }
-
-    // -----------------------------------------------------------------------
-    // Game-state triggers
-    // -----------------------------------------------------------------------
+    // ── Game-state triggers ───────────────────────────────────────────────
 
     private void triggerGameOver(boolean won) {
-        levelComplete      = true;
-        gameOverMenu       = true;
-        victory            = won;
-        selectedMenuOption = 0;
-        mouseDeltaX        = 0;
+        state.levelComplete = true;
+        state.gameOverMenu  = true;
+        state.victory       = won;
+        state.selectedMenuOption = 0;
 
         if (networkClient != null) {
-            menuOptions = new String[]{"Quit"};          // server controls the session
-        } else if (won && !config.isLast()) {
-            menuOptions = new String[]{"Next Level", "Restart", "Quit"};
+            state.menuOptions = new String[]{"Quit"};
+        } else if (won && !state.config.isLast()) {
+            state.menuOptions = new String[]{"Next Level", "Restart", "Quit"};
         } else if (won) {
-            menuOptions = new String[]{"Play Again", "Quit"};
+            state.menuOptions = new String[]{"Play Again", "Quit"};
         } else {
-            menuOptions = new String[]{"Restart", "Quit"};
+            state.menuOptions = new String[]{"Restart", "Quit"};
         }
 
-        disableMouseCapture();
+        input.disableMouseCapture();
+        input.reset();
         timer.stop();
         requestFocusInWindow();
         repaint();
     }
 
     private void updateMonsterAudio() {
-        if (monsters.isEmpty()) { SoundPlayer.stopMonsterSound(); return; }
-
+        if (state.monsters.isEmpty()) { SoundPlayer.stopMonsterSound(); return; }
         MonsterEntity closest = null;
-        double  minDist = Double.MAX_VALUE;
-        for (MonsterEntity m : monsters) {
-            double d = Math.hypot(m.getX() - playerX, m.getY() - playerY);
+        double minDist = Double.MAX_VALUE;
+        for (MonsterEntity m : state.monsters) {
+            double d = Math.hypot(m.getX() - player.playerX, m.getY() - player.playerY);
             if (d < minDist) { minDist = d; closest = m; }
         }
-
-        double dx     = closest.getX() - playerX;
-        double dy     = closest.getY() - playerY;
-        double volume = 1.0 - Math.min(minDist / 640.0, 1.0);
-        double pan    = Math.sin(normalizeAngle(Math.atan2(dy, dx) - playerAngle));
-
-        if (volume <= 0.02 || levelComplete || gameOverMenu) {
-            SoundPlayer.stopMonsterSound();
-        } else {
-            SoundPlayer.updateMonsterSound(pan, volume);
-        }
+        double dx  = closest.getX() - player.playerX;
+        double dy  = closest.getY() - player.playerY;
+        double vol = 1.0 - Math.min(minDist / 640.0, 1.0);
+        double pan = Math.sin(normalizeAngle(Math.atan2(dy, dx) - player.playerAngle));
+        if (vol <= 0.02 || state.levelComplete) SoundPlayer.stopMonsterSound();
+        else SoundPlayer.updateMonsterSound(pan, vol);
     }
 
-    // -----------------------------------------------------------------------
-    // Game-object logic
-    // -----------------------------------------------------------------------
-
-    private void spawnMonsters(int count) {
-        monsters.clear();
-        List<int[]> taken = new ArrayList<>();
-        for (int i = 0; i < count; i++) {
-            int[] pos = findEmptyMonsterSpawn(taken);
-            taken.add(pos);
-            monsters.add(new MonsterEntity(pos[0], pos[1], TILE_SIZE));
-        }
+    private void restartGame() {
+        state.loadLevel(state.getCurrentLevelIndex());
+        double sx = GameState.START_TILE_X * TILE_SIZE + TILE_SIZE / 2.0;
+        double sy = GameState.START_TILE_Y * TILE_SIZE + TILE_SIZE / 2.0;
+        player.reset(sx, sy, Math.toRadians(45));
+        input.reset();
+        timer.start();
+        input.enableMouseCapture();
     }
 
-    private void spawnBalls(int count) {
-        int mapSize = config.mapSize;
-        balls.clear();
-        while (balls.size() < count) {
-            int tileX = 1 + random.nextInt(mapSize - 2);
-            int tileY = 1 + random.nextInt(mapSize - 2);
-            if (map[tileY][tileX] != 0) continue;
-            if ((tileX == startTileX && tileY == startTileY)
-                    || (tileX == exitTileX && tileY == exitTileY)) continue;
-            boolean occupied = balls.stream().anyMatch(
-                    b -> (int) (b.x / TILE_SIZE) == tileX && (int) (b.y / TILE_SIZE) == tileY);
-            if (occupied) continue;
-            balls.add(new Ball(tileX * TILE_SIZE + TILE_SIZE / 2.0,
-                               tileY * TILE_SIZE + TILE_SIZE / 2.0));
-        }
-    }
-
-    private void collectBalls() {
-        double  pickupRadius = 18;
-        boolean collected    = false;
-        for (int i = balls.size() - 1; i >= 0; i--) {
-            Ball b  = balls.get(i);
-            double dx = playerX - b.x, dy = playerY - b.y;
-            if (dx * dx + dy * dy <= pickupRadius * pickupRadius) {
-                balls.remove(i);
-                collected = true;
-            }
-        }
-        if (collected) {
-            SoundPlayer.playDing();
-            if (balls.isEmpty()) door.open();
-        }
-    }
-
-    private void checkExit() {
-        if (door.isOpen() && isPlayerTouchingDoor()) {
-            if (!victoryMusicPlayed) {
-                victoryMusicPlayed = true;
-                SoundPlayer.playVictoryMusic();
-            }
-            triggerGameOver(true);
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Map / collision helpers (package-private — used by Renderer)
-    // -----------------------------------------------------------------------
-
-    public int getMapTile(int mapX, int mapY) {
-        if (door.isAt(mapX, mapY)) return door.getMapValue();
-        return map[mapY][mapX];
-    }
-
-    public boolean isExitOpen() {
-        return door.isOpen();
-    }
-
-    // -----------------------------------------------------------------------
-    // Private map helpers
-    // -----------------------------------------------------------------------
-
-    private boolean isWallTile(int mapX, int mapY) {
-        int mapSize = config.mapSize;
-        if (mapX < 0 || mapX >= mapSize || mapY < 0 || mapY >= mapSize) return true;
-        if (door.isAt(mapX, mapY)) return !door.isOpen();
-        return getMapTile(mapX, mapY) != 0;
-    }
-
-    private boolean collides(double x, double y) {
-        return isWallTile((int) x / TILE_SIZE, (int) y / TILE_SIZE);
-    }
-
-    private boolean isPlayerTouchingDoor() {
-        return (int) playerX / TILE_SIZE == exitTileX - 1
-            && (int) playerY / TILE_SIZE == exitTileY;
-    }
-
-    private boolean isEmptyTile(int x, int y) {
-        int mapSize = config.mapSize;
-        if (x < 0 || x >= mapSize || y < 0 || y >= mapSize) return false;
-        return map[y][x] == 0;
-    }
-
-    private int[] findEmptyMonsterSpawn(List<int[]> taken) {
-        int mapSize = config.mapSize;
-        int spawnX, spawnY;
-        do {
-            spawnX = 1 + random.nextInt(mapSize - 2);
-            spawnY = 1 + random.nextInt(mapSize - 2);
-            final int fx = spawnX, fy = spawnY;
-            if (!isEmptyTile(fx, fy)) continue;
-            if (fx == startTileX && fy == startTileY) continue;
-            if (fx == exitTileX  && fy == exitTileY)  continue;
-            if (taken.stream().anyMatch(p -> p[0] == fx && p[1] == fy)) continue;
-            break;
-        } while (true);
-        return new int[]{spawnX, spawnY};
-    }
-
-    private void generateRandomMap() {
-        map = MazeGenerator.generateMaze(config.mapSize, startTileX, startTileY,
-                                         exitTileX - 1, exitTileY);
-        map[startTileY][startTileX]     = 0;
-        map[startTileY][startTileX + 1] = 0;
-        map[startTileY + 1][startTileX] = 0;
-        map[exitTileY][exitTileX - 1]   = 0;
-    }
-
-    private double normalizeAngle(double angle) {
-        while (angle >  Math.PI) angle -= 2 * Math.PI;
-        while (angle < -Math.PI) angle += 2 * Math.PI;
-        return angle;
-    }
-
-    // -----------------------------------------------------------------------
-    // Pause menu
-    // -----------------------------------------------------------------------
-
-    private void togglePauseMenu() {
-        paused = !paused;
-        pauseMenuSelected = 0;
-        if (paused) {
-            disableMouseCapture();
-            if (networkClient == null) timer.stop();   // freeze single-player
-        } else {
-            if (networkClient == null) {
-                lastUpdateTime = System.currentTimeMillis(); // avoid frame-time spike
-                timer.start();
-            }
-            enableMouseCapture();
-        }
-        repaint();
-    }
-
-    private void navigatePauseMenu(int delta) {
-        pauseMenuSelected = (pauseMenuSelected + pauseMenuOptions.length + delta) % pauseMenuOptions.length;
-        repaint();
-    }
-
-    private void selectPauseOption() {
-        switch (pauseMenuOptions[pauseMenuSelected]) {
-            case "Resume"       -> togglePauseMenu();
-            case "Back to Menu" -> returnToMenu();
-        }
+    private void nextLevel() {
+        state.loadLevel(state.getCurrentLevelIndex() + 1);
+        double sx = GameState.START_TILE_X * TILE_SIZE + TILE_SIZE / 2.0;
+        double sy = GameState.START_TILE_Y * TILE_SIZE + TILE_SIZE / 2.0;
+        player.reset(sx, sy, Math.toRadians(45));
+        input.reset();
+        timer.start();
+        input.enableMouseCapture();
     }
 
     void returnToMenu() {
         timer.stop();
-        paused = false;
+        state.paused = false;
         SoundPlayer.stopMonsterSound();
         if (networkClient != null) networkClient.disconnect();
-        if (returnToMenuAction != null) {
-            SwingUtilities.invokeLater(returnToMenuAction);
+        if (returnToMenuAction != null) SwingUtilities.invokeLater(returnToMenuAction);
+        else System.exit(0);
+    }
+
+    private void togglePauseMenu() {
+        state.paused = !state.paused;
+        state.pauseMenuSelected = 0;
+        if (state.paused) {
+            input.disableMouseCapture();
+            if (networkClient == null) timer.stop();
         } else {
-            System.exit(0);
+            lastUpdateTime = System.currentTimeMillis();
+            if (networkClient == null) timer.start();
+            input.enableMouseCapture();
         }
-    }
-
-    // -----------------------------------------------------------------------
-    // Keyboard input
-    // -----------------------------------------------------------------------
-
-    private class InputAdapter extends KeyAdapter {
-        @Override
-        public void keyPressed(KeyEvent e) {
-            switch (e.getKeyCode()) {
-                case KeyEvent.VK_W      -> moveForward  = true;
-                case KeyEvent.VK_S      -> moveBackward = true;
-                case KeyEvent.VK_A      -> strafeLeft   = true;
-                case KeyEvent.VK_D      -> strafeRight  = true;
-                case KeyEvent.VK_LEFT   -> turnLeft     = true;   // fallback if no mouse
-                case KeyEvent.VK_RIGHT  -> turnRight    = true;
-                case KeyEvent.VK_SHIFT  -> shiftHeld    = true;
-                case KeyEvent.VK_UP     -> { if (paused) navigatePauseMenu(-1); else if (gameOverMenu) navigateMenu(-1); }
-                case KeyEvent.VK_DOWN   -> { if (paused) navigatePauseMenu(+1); else if (gameOverMenu) navigateMenu(+1); }
-                case KeyEvent.VK_ENTER  -> { if (paused) selectPauseOption(); else if (gameOverMenu) selectMenuOption(); }
-                case KeyEvent.VK_ESCAPE -> { if (!gameOverMenu && !levelComplete) togglePauseMenu(); }
-                case KeyEvent.VK_R      -> { if (networkClient == null && !paused) restartGame(); }
-            }
-        }
-
-        @Override
-        public void keyReleased(KeyEvent e) {
-            switch (e.getKeyCode()) {
-                case KeyEvent.VK_W      -> moveForward  = false;
-                case KeyEvent.VK_S      -> moveBackward = false;
-                case KeyEvent.VK_A      -> strafeLeft   = false;
-                case KeyEvent.VK_D      -> strafeRight  = false;
-                case KeyEvent.VK_LEFT   -> turnLeft     = false;
-                case KeyEvent.VK_RIGHT  -> turnRight    = false;
-                case KeyEvent.VK_SHIFT  -> shiftHeld    = false;
-            }
-            if (gameOverMenu) repaint();
-        }
-    }
-
-    private void navigateMenu(int delta) {
-        selectedMenuOption = (selectedMenuOption + menuOptions.length + delta) % menuOptions.length;
-        requestFocusInWindow();
         repaint();
     }
 
-    private void selectMenuOption() {
-        switch (menuOptions[selectedMenuOption]) {
+    private double normalizeAngle(double a) {
+        while (a >  Math.PI) a -= 2 * Math.PI;
+        while (a < -Math.PI) a += 2 * Math.PI;
+        return a;
+    }
+
+    // ── Keyboard adapter ──────────────────────────────────────────────────
+
+    private class InputKeyAdapter extends KeyAdapter {
+        @Override
+        public void keyPressed(KeyEvent e) {
+            switch (e.getKeyCode()) {
+                case KeyEvent.VK_W     -> input.moveForward  = true;
+                case KeyEvent.VK_S     -> input.moveBackward = true;
+                case KeyEvent.VK_A     -> input.strafeLeft   = true;
+                case KeyEvent.VK_D     -> input.strafeRight  = true;
+                case KeyEvent.VK_LEFT  -> input.turnLeft     = true;
+                case KeyEvent.VK_RIGHT -> input.turnRight    = true;
+                case KeyEvent.VK_SHIFT -> input.shiftHeld    = true;
+                case KeyEvent.VK_UP    -> { if (state.paused) navigatePause(-1); else if (state.gameOverMenu) navigateMenu(-1); }
+                case KeyEvent.VK_DOWN  -> { if (state.paused) navigatePause(+1); else if (state.gameOverMenu) navigateMenu(+1); }
+                case KeyEvent.VK_ENTER -> { if (state.paused) selectPause();     else if (state.gameOverMenu) selectMenu(); }
+                case KeyEvent.VK_ESCAPE -> { if (!state.gameOverMenu) togglePauseMenu(); }
+                case KeyEvent.VK_R     -> { if (networkClient == null && !state.paused) restartGame(); }
+            }
+        }
+        @Override
+        public void keyReleased(KeyEvent e) {
+            switch (e.getKeyCode()) {
+                case KeyEvent.VK_W     -> input.moveForward  = false;
+                case KeyEvent.VK_S     -> input.moveBackward = false;
+                case KeyEvent.VK_A     -> input.strafeLeft   = false;
+                case KeyEvent.VK_D     -> input.strafeRight  = false;
+                case KeyEvent.VK_LEFT  -> input.turnLeft     = false;
+                case KeyEvent.VK_RIGHT -> input.turnRight    = false;
+                case KeyEvent.VK_SHIFT -> input.shiftHeld    = false;
+            }
+        }
+    }
+
+    private void navigateMenu(int d) {
+        state.selectedMenuOption = (state.selectedMenuOption + state.menuOptions.length + d) % state.menuOptions.length;
+        repaint();
+    }
+
+    private void selectMenu() {
+        switch (state.menuOptions[state.selectedMenuOption]) {
             case "Next Level"  -> nextLevel();
             case "Restart"     -> restartGame();
-            case "Play Again"  -> { loadLevel(0); timer.start(); enableMouseCapture(); }
+            case "Play Again"  -> { state.loadLevel(0); player.reset(GameState.START_TILE_X * TILE_SIZE + TILE_SIZE / 2.0, GameState.START_TILE_Y * TILE_SIZE + TILE_SIZE / 2.0, Math.toRadians(45)); timer.start(); input.enableMouseCapture(); }
             case "Quit"        -> System.exit(0);
+        }
+    }
+
+    private void navigatePause(int d) {
+        state.pauseMenuSelected = (state.pauseMenuSelected + state.pauseMenuOptions.length + d) % state.pauseMenuOptions.length;
+        repaint();
+    }
+
+    private void selectPause() {
+        switch (state.pauseMenuOptions[state.pauseMenuSelected]) {
+            case "Resume"       -> togglePauseMenu();
+            case "Back to Menu" -> returnToMenu();
         }
     }
 }

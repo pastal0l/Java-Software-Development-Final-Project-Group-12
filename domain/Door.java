@@ -1,6 +1,6 @@
 package domain;
 public class Door {
-    public static final int DOOR_TILE = 2;
+    public static final int DOOR_TILE = 5; // Unique ID for door tiles in the map
     private final int tileX;
     private final int tileY;
     private boolean open;

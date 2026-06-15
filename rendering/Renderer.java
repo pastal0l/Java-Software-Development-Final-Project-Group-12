@@ -1,4 +1,5 @@
 package rendering;
+
 import java.awt.Color;
 import java.awt.Font;
 import java.awt.Graphics;
@@ -6,6 +7,8 @@ import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
 
 import UI.GamePanel;
+import UI.GameState;
+import UI.PlayerController;
 import domain.Ball;
 import domain.Door;
 import domain.RayHit;
@@ -17,11 +20,9 @@ import network.RemotePlayer;
  * minimap, HUD, status bar, and game-over / level-complete overlay.
  *
  * It holds a reference to {@link GamePanel} and reads state each frame.
- * MAP_SIZE is read from {@code game.config.mapSize} so all levels work
- * without any extra wiring.
  */
 public class Renderer {
-
+    private final TextureRegistry textureRegistry;
     private static final int TILE_SIZE  = GamePanel.TILE_SIZE;
     private static final int TEX_SIZE   = GamePanel.TEX_SIZE;
     /** Minimap display size in pixels; tile pixel-size adapts per level. */
@@ -34,6 +35,7 @@ public class Renderer {
 
     public Renderer(GamePanel game) {
         this.game = game;
+        this.textureRegistry = new TextureRegistry();
     }
 
     // -----------------------------------------------------------------------
@@ -46,8 +48,8 @@ public class Renderer {
         drawHUD(g);
         drawStatus(g);
         drawIPLabel(g);
-        if (game.paused)       drawPauseMenu(g);
-        else if (game.gameOverMenu) drawGameOverMenu(g);
+        if (game.state.paused)       drawPauseMenu(g);
+        else if (game.state.gameOverMenu) drawGameOverMenu(g);
     }
 
     // -----------------------------------------------------------------------
@@ -83,13 +85,13 @@ public class Renderer {
         double fov        = Math.toRadians(60);
         int    rayCount   = width / 2;
         double rayStep    = fov / rayCount;
-        double startAngle = game.playerAngle - fov / 2;
+        double startAngle = game.player.playerAngle - fov / 2;
         double[] rayDistances = new double[rayCount];
 
         for (int ray = 0; ray < rayCount; ray++) {
             double rayAngle      = startAngle + ray * rayStep;
             RayHit hit           = castRay(rayAngle);
-            double correctedDist = hit.distance * Math.cos(rayAngle - game.playerAngle);
+            double correctedDist = hit.distance * Math.cos(rayAngle - game.player.playerAngle);
             rayDistances[ray]    = correctedDist;
 
             int lineHeight = Math.max(1, Math.min((int) ((TILE_SIZE * height) / correctedDist), height));
@@ -106,7 +108,7 @@ public class Renderer {
                     int texY  = Math.max(0, Math.min(TEX_SIZE - 1,
                             (int) (((y - lineOffset) * TEX_SIZE) / (double) lineHeight)));
                     int color = hit.texture[hit.textureX][texY];
-                    if (!(hit.wallType == Door.DOOR_TILE && game.isExitOpen())) {
+                    if (!(hit.wallType == Door.DOOR_TILE && game.state.isExitOpen())) {
                         if (hit.side == 1) color = shadeColor(color, 0.70);
                         color = shadeColor(color,
                                 Math.max(0.20, 1.0 / (1.0 + correctedDist * correctedDist * 0.00005)));
@@ -125,34 +127,32 @@ public class Renderer {
     }
 
     // -----------------------------------------------------------------------
-    // Monster sprite rendering (one call per monster, back-to-front)
+    // Monster sprite rendering
     // -----------------------------------------------------------------------
 
     private void drawAllMonsterSprites(Graphics g, int width, int height) {
-        // Painter's algorithm: draw farthest monsters first so near ones
-        // visually overlap them correctly.
-        game.monsters.stream()
+        game.state.monsters.stream()
             .sorted((a, b) -> {
-                double da = Math.hypot(a.getX() - game.playerX, a.getY() - game.playerY);
-                double db = Math.hypot(b.getX() - game.playerX, b.getY() - game.playerY);
-                return Double.compare(db, da);   // descending — farthest first
+                double da = Math.hypot(a.getX() - game.player.playerX, a.getY() - game.player.playerY);
+                double db = Math.hypot(b.getX() - game.player.playerX, b.getY() - game.player.playerY);
+                return Double.compare(db, da);
             })
             .forEach(m -> drawMonsterSprite(g, width, height, m));
     }
 
     private void drawMonsterSprite(Graphics g, int width, int height, MonsterEntity m) {
-        double dx = m.getX() - game.playerX;
-        double dy = m.getY() - game.playerY;
+        double dx = m.getX() - game.player.playerX;
+        double dy = m.getY() - game.player.playerY;
         double distance = Math.sqrt(dx * dx + dy * dy);
         if (distance <= 0) return;
 
         double angleToMonster = Math.atan2(dy, dx);
-        double relativeAngle  = normalizeAngle(angleToMonster - game.playerAngle);
+        double relativeAngle  = normalizeAngle(angleToMonster - game.player.playerAngle);
         double fov = Math.toRadians(60);
         if (Math.abs(relativeAngle) > fov / 2) return;
 
         double spritePerpDist = distance * Math.cos(relativeAngle);
-        if (castRayDistance(game.playerAngle + relativeAngle) + 1.0 < spritePerpDist) return;
+        if (castRayDistance(game.player.playerAngle + relativeAngle) + 1.0 < spritePerpDist) return;
 
         int screenX    = (int) (((relativeAngle / (fov / 2)) * 0.5 + 0.5) * width);
         int spriteSize = Math.max(12, Math.min((int) ((TILE_SIZE * height) / distance * 0.4), 80));
@@ -174,27 +174,21 @@ public class Renderer {
     // Remote co-op player sprite
     // -----------------------------------------------------------------------
 
-    /**
-     * Draws the remote player as a cyan humanoid silhouette in the 3-D view.
-     * Uses the same perspective projection as the monster sprites but with a
-     * distinct colour so the two players can tell each other apart.
-     */
     private void drawRemotePlayerSprite(Graphics g, int width, int height) {
         RemotePlayer rp = game.remotePlayer;
         if (rp == null) return;
 
-        double dx       = rp.x - game.playerX;
-        double dy       = rp.y - game.playerY;
+        double dx       = rp.x - game.player.playerX;
+        double dy       = rp.y - game.player.playerY;
         double distance = Math.sqrt(dx * dx + dy * dy);
         if (distance < 1.0) return;
 
         double angleTo  = Math.atan2(dy, dx);
-        double relAngle = normalizeAngle(angleTo - game.playerAngle);
+        double relAngle = normalizeAngle(angleTo - game.player.playerAngle);
         double fov      = Math.toRadians(60);
         if (Math.abs(relAngle) > fov / 2) return;
 
-        // Wall occlusion: don't draw through walls
-        if (castRayDistance(game.playerAngle + relAngle) + 1.0 < distance) return;
+        if (castRayDistance(game.player.playerAngle + relAngle) + 1.0 < distance) return;
 
         int screenX    = (int) (((relAngle / (fov / 2)) * 0.5 + 0.5) * width);
         int spriteH    = Math.max(16, Math.min((int) ((TILE_SIZE * height) / distance * 0.9), 140));
@@ -202,28 +196,24 @@ public class Renderer {
         int alpha      = (int) Math.min(255, 200 * (1.0 - distance / 1200.0));
         if (alpha <= 10) return;
 
-        // ── Head ──────────────────────────────────────────────────────────
         int headR  = Math.max(4, spriteH / 6);
         int headCY = centerY - spriteH / 2 + headR;
         g.setColor(new Color(0, 210, 255, alpha));
         g.fillOval(screenX - headR, headCY - headR, headR * 2, headR * 2);
 
-        // ── Torso ──────────────────────────────────────────────────────────
         int torsoW = Math.max(4, spriteH / 5);
         int torsoH = spriteH / 3;
         int torsoY = headCY + headR + 2;
         g.setColor(new Color(0, 160, 200, alpha));
         g.fillRect(screenX - torsoW / 2, torsoY, torsoW, torsoH);
 
-        // ── Legs ───────────────────────────────────────────────────────────
         int legW = Math.max(2, torsoW / 3);
         int legH = spriteH / 4;
         int legY = torsoY + torsoH + 1;
         g.setColor(new Color(0, 120, 160, alpha));
-        g.fillRect(screenX - torsoW / 2,         legY, legW, legH);   // left
-        g.fillRect(screenX + torsoW / 2 - legW,  legY, legW, legH);   // right
+        g.fillRect(screenX - torsoW / 2,         legY, legW, legH); 
+        g.fillRect(screenX + torsoW / 2 - legW,  legY, legW, legH); 
 
-        // ── Name label ─────────────────────────────────────────────────────
         if (distance < 500 && spriteH > 30) {
             g.setFont(g.getFont().deriveFont(Font.BOLD, 11f));
             g.setColor(new Color(200, 240, 255, alpha));
@@ -242,28 +232,28 @@ public class Renderer {
         double fov             = Math.toRadians(60);
         double projectionPlane = (width / 2.0) / Math.tan(fov / 2.0);
 
-        for (Ball ball : game.balls) {
-            double dx = ball.x - game.playerX;
-            double dy = ball.y - game.playerY;
+        for (Ball ball : game.state.balls) {
+            double dx = ball.x - game.player.playerX;
+            double dy = ball.y - game.player.playerY;
             double distance = Math.sqrt(dx * dx + dy * dy);
             if (distance < 0.1) continue;
 
             double angleToBall = Math.atan2(dy, dx);
-            double angleDiff   = normalizeAngle(angleToBall - game.playerAngle);
+            double angleDiff   = normalizeAngle(angleToBall - game.player.playerAngle);
             if (Math.abs(angleDiff) > fov / 2.0) continue;
 
             int spriteScreenX = (int) ((width / 2.0) + projectionPlane * Math.tan(angleDiff));
             int spriteSize    = Math.max(18, Math.min((int) ((TILE_SIZE * height) / distance * 0.20), 90));
             int spriteHalf    = spriteSize / 2;
 
-            int floatOffset   = (int) (Math.sin(game.floatPhase + distance * 0.05) * 8);
+            int floatOffset   = (int) (Math.sin(game.state.floatPhase + distance * 0.05) * 8);
             int spriteScreenY = horizon - spriteHalf - 12 + floatOffset;
             int spriteTop     = spriteScreenY - spriteHalf;
             int spriteBottom  = spriteScreenY + spriteHalf;
             int spriteLeft    = spriteScreenX - spriteHalf;
             int spriteRight   = spriteScreenX + spriteHalf;
 
-            if (castRayDistance(game.playerAngle + angleDiff) < distance - 1) continue;
+            if (castRayDistance(game.player.playerAngle + angleDiff) < distance - 1) continue;
 
             int baseColor = 0x7ED6FF;
             int glow      = 0xD8F2FF;
@@ -295,15 +285,12 @@ public class Renderer {
     // HUD / UI overlays
     // -----------------------------------------------------------------------
 
-    /**
-     * Top-right: level number, countdown, sprint indicator.
-     */
     private void drawHUD(Graphics g) {
         int    width       = game.getWidth();
-        int    timeSeconds = (int) (game.remainingTimeMillis / 1000);
+        int    timeSeconds = (int) (game.state.remainingTimeMillis / 1000);
         String timeStr     = String.format("%02d:%02d", timeSeconds / 60, timeSeconds % 60);
-        String levelStr    = "Level " + game.config.level;
-        String sprintStr   = game.sprinting ? "  [SPRINT]" : "";
+        String levelStr    = "Level " + game.state.config.level;
+        String sprintStr   = game.player.sprinting ? "  [SPRINT]" : "";
 
         g.setColor(new Color(0, 0, 0, 160));
         g.fillRect(width - 290, 10, 280, 36);
@@ -312,42 +299,32 @@ public class Renderer {
         g.setColor(Color.WHITE);
         g.drawString(levelStr + "   " + timeStr, width - 278, 32);
 
-        if (game.sprinting) {
-            g.setColor(new Color(255, 220, 50));   // yellow
+        if (game.player.sprinting) {
+            g.setColor(new Color(255, 220, 50)); 
             int tw = g.getFontMetrics().stringWidth(levelStr + "   " + timeStr);
             g.drawString(sprintStr, width - 278 + tw, 32);
         }
     }
 
-    /**
-     * Top-left: diamond progress, hint, and stamina bar.
-     */
     private void drawStatus(Graphics g) {
-        int collected = game.config.objectiveCount - game.balls.size();
+        int collected = game.state.config.objectiveCount - game.state.balls.size();
         g.setColor(new Color(0, 0, 0, 200));
         g.fillRect(10, 10, 250, 90);
         g.setColor(Color.WHITE);
         g.setFont(g.getFont().deriveFont(16f));
-        g.drawString("Diamonds: " + collected + " / " + game.config.objectiveCount, 18, 32);
-        g.drawString(game.balls.isEmpty() ? "Now go to the exit." : "Collect all diamonds.", 18, 52);
+        g.drawString("Diamonds: " + collected + " / " + game.state.config.objectiveCount, 18, 32);
+        g.drawString(game.state.balls.isEmpty() ? "Now go to the exit." : "Collect all diamonds.", 18, 52);
         drawStaminaBar(g, 18, 62, 230, 14);
     }
 
-    /**
-     * Draws a horizontal stamina bar at (x, y) with given width/height.
-     * Color: green >50 %, yellow 25–50 %, red <25 %, gray when exhausted.
-     * Shows "RECOVERING" label in red when sprint-locked.
-     */
     private void drawStaminaBar(Graphics g, int x, int y, int w, int h) {
-        // Background track
         g.setColor(new Color(50, 50, 50, 220));
         g.fillRoundRect(x, y, w, h, 6, 6);
 
-        // Filled portion
-        double pct   = game.stamina / GamePanel.MAX_STAMINA;
+        double pct   = game.player.stamina / PlayerController.MAX_STAMINA;
         int    fillW = (int) (w * pct);
         Color  fill;
-        if (game.exhausted) {
+        if (game.player.exhausted) {
             fill = new Color(100, 100, 100);
         } else if (pct > 0.50) {
             fill = new Color(50, 200, 80);
@@ -361,22 +338,17 @@ public class Renderer {
             g.fillRoundRect(x, y, fillW, h, 6, 6);
         }
 
-        // Border
         g.setColor(new Color(180, 180, 180, 180));
         g.drawRoundRect(x, y, w, h, 6, 6);
 
-        // Label
         g.setFont(g.getFont().deriveFont(10f));
-        String label = game.exhausted ? "RECOVERING" : "STAMINA";
-        g.setColor(game.exhausted ? new Color(220, 80, 80) : Color.WHITE);
+        String label = game.player.exhausted ? "RECOVERING" : "STAMINA";
+        g.setColor(game.player.exhausted ? new Color(220, 80, 80) : Color.WHITE);
         g.drawString(label, x + 3, y + h - 2);
     }
 
-    /**
-     * Left column: adaptive minimap showing tiles, player, monsters, diamonds.
-     */
     private void drawMinimap(Graphics g) {
-        int mapSize = game.config.mapSize;
+        int mapSize = game.state.config.mapSize;
         int tilePx  = MINIMAP_PX / mapSize;
         int mapPx   = mapSize * tilePx;
         int offsetX = 10;
@@ -387,25 +359,23 @@ public class Renderer {
 
         for (int y = 0; y < mapSize; y++) {
             for (int x = 0; x < mapSize; x++) {
-                if (x == game.exitTileX && y == game.exitTileY) {
+                if (x == game.state.exitTileX && y == game.state.exitTileY) {
                     drawMinimapDoor(g, offsetX, offsetY, x, y, tilePx);
                     continue;
                 }
-                g.setColor(game.map[y][x] > 0 ? Color.DARK_GRAY : Color.LIGHT_GRAY);
+                g.setColor(game.state.map[y][x] > 0 ? Color.DARK_GRAY : Color.LIGHT_GRAY);
                 g.fillRect(offsetX + x * tilePx, offsetY + y * tilePx, tilePx, tilePx);
             }
         }
 
-        // Player dot + direction
-        int px = (int) (game.playerX / TILE_SIZE * tilePx);
-        int py = (int) (game.playerY / TILE_SIZE * tilePx);
+        int px = (int) (game.player.playerX / TILE_SIZE * tilePx);
+        int py = (int) (game.player.playerY / TILE_SIZE * tilePx);
         g.setColor(Color.RED);
         g.fillOval(offsetX + px - 4, offsetY + py - 4, 8, 8);
         g.drawLine(offsetX + px, offsetY + py,
-                   offsetX + px + (int) (Math.cos(game.playerAngle) * 10),
-                   offsetY + py + (int) (Math.sin(game.playerAngle) * 10));
+                   offsetX + px + (int) (Math.cos(game.player.playerAngle) * 10),
+                   offsetY + py + (int) (Math.sin(game.player.playerAngle) * 10));
 
-        // Remote player dot + direction (cyan)
         RemotePlayer rp = game.remotePlayer;
         if (rp != null) {
             int rpx = (int) (rp.x / TILE_SIZE * tilePx);
@@ -418,12 +388,10 @@ public class Renderer {
                        offsetY + rpy + (int) (Math.sin(rp.angle) * 10));
         }
 
-        // Start tile
         g.setColor(Color.BLUE);
-        g.fillOval(offsetX + game.startTileX * tilePx + 2, offsetY + game.startTileY * tilePx + 2, 6, 6);
+        g.fillOval(offsetX + GameState.START_TILE_X * tilePx + 2, offsetY + GameState.START_TILE_Y * tilePx + 2, 6, 6);
 
-        // Diamonds
-        for (Ball ball : game.balls) {
+        for (Ball ball : game.state.balls) {
             int bx = offsetX + (int) (ball.x / TILE_SIZE * tilePx);
             int by = offsetY + (int) (ball.y / TILE_SIZE * tilePx);
             g.setColor(Color.MAGENTA);
@@ -432,15 +400,14 @@ public class Renderer {
             g.fillOval(bx - 3, by - 3, 6, 6);
         }
 
-        // All monsters
-        for (MonsterEntity m : game.monsters) {
+        for (MonsterEntity m : game.state.monsters) {
             MonsterRenderer renderer = new MonsterRenderer(m);
             renderer.drawOnMinimap(g, offsetX, offsetY, tilePx);
         }
     }
 
     private void drawMinimapDoor(Graphics g, int offsetX, int offsetY, int x, int y, int tilePx) {
-        if (game.isExitOpen()) {
+        if (game.state.isExitOpen()) {
             g.setColor(Color.WHITE);
             g.fillRect(offsetX + x * tilePx, offsetY + y * tilePx, tilePx, tilePx);
         } else {
@@ -455,9 +422,6 @@ public class Renderer {
         }
     }
 
-    /**
-     * Small IP-address label in the bottom-right corner.
-     */
     private void drawIPLabel(Graphics g) {
         if (localIP == null) {
             try { localIP = java.net.InetAddress.getLocalHost().getHostAddress(); }
@@ -474,10 +438,6 @@ public class Renderer {
         g.drawString(text, width - sw - 13, height - 10);
     }
 
-    /**
-     * Semi-transparent pause overlay (ESC).  In multiplayer the game keeps
-     * running behind it; in single-player the timer is stopped.
-     */
     private void drawPauseMenu(Graphics g) {
         int width  = game.getWidth();
         int height = game.getHeight();
@@ -485,7 +445,7 @@ public class Renderer {
         g.setColor(new Color(0, 0, 0, 160));
         g.fillRect(0, 0, width, height);
 
-        int numOpts   = game.pauseMenuOptions.length;
+        int numOpts   = game.state.pauseMenuOptions.length;
         int boxWidth  = 360;
         int boxHeight = 56 + numOpts * 42 + 36;
         int boxX = width  / 2 - boxWidth  / 2;
@@ -504,9 +464,9 @@ public class Renderer {
 
         g.setFont(g.getFont().deriveFont(22f));
         for (int i = 0; i < numOpts; i++) {
-            String opt = game.pauseMenuOptions[i];
+            String opt = game.state.pauseMenuOptions[i];
             int oy = boxY + 68 + i * 42;
-            if (i == game.pauseMenuSelected) {
+            if (i == game.state.pauseMenuSelected) {
                 g.setColor(new Color(50, 100, 220));
                 g.fillRoundRect(width / 2 - 130, oy - 27, 260, 34, 10, 10);
                 g.setColor(Color.WHITE);
@@ -532,33 +492,30 @@ public class Renderer {
         }
     }
 
-    /**
-     * Full-screen overlay: level complete / final victory / game over.
-     */
     private void drawGameOverMenu(Graphics g) {
         int width  = game.getWidth();
         int height = game.getHeight();
 
-        boolean finalVictory = game.victory && game.config.isLast();
-        boolean levelWon     = game.victory && !game.config.isLast();
+        boolean finalVictory = game.state.victory && game.state.config.isLast();
+        boolean levelWon     = game.state.victory && !game.state.config.isLast();
 
         String title, subtitle;
         if (finalVictory) {
             title    = "You Win!";
             subtitle = "All 3 levels cleared!";
         } else if (levelWon) {
-            title    = "Level " + game.config.level + " Complete!";
-            subtitle = "Get ready for Level " + (game.config.level + 1) + "...";
+            title    = "Level " + game.state.config.level + " Complete!";
+            subtitle = "Get ready for Level " + (game.state.config.level + 1) + "...";
         } else {
             title    = "Game Over";
-            subtitle = game.remotePlayerLeft ? "Other player disconnected." : "You were defeated.";
+            subtitle = game.state.remotePlayerLeft ? "Other player disconnected." : "You were defeated.";
         }
 
         g.setColor(new Color(0, 0, 0, 200));
         g.fillRect(0, 0, width, height);
 
         int boxWidth  = 440;
-        int boxHeight = 60 + game.menuOptions.length * 34 + 80;
+        int boxHeight = 60 + game.state.menuOptions.length * 34 + 80;
         int boxX = width  / 2 - boxWidth  / 2;
         int boxY = height / 2 - boxHeight / 2;
 
@@ -577,10 +534,10 @@ public class Renderer {
         g.drawString(subtitle, width / 2 - subW / 2, boxY + 85);
 
         g.setFont(g.getFont().deriveFont(22f));
-        for (int i = 0; i < game.menuOptions.length; i++) {
-            String option = game.menuOptions[i];
+        for (int i = 0; i < game.state.menuOptions.length; i++) {
+            String option = game.state.menuOptions[i];
             int optionY   = boxY + 115 + i * 34;
-            if (i == game.selectedMenuOption) {
+            if (i == game.state.selectedMenuOption) {
                 g.setColor(new Color(50, 100, 220));
                 g.fillRoundRect(width / 2 - 110, optionY - 24, 220, 30, 12, 12);
                 g.setColor(Color.WHITE);
@@ -605,20 +562,20 @@ public class Renderer {
     private RayHit castRay(double rayAngle) {
         double rayDirX = Math.cos(rayAngle);
         double rayDirY = Math.sin(rayAngle);
-        int    mapSize = game.config.mapSize;
+        int    mapSize = game.state.config.mapSize;
 
-        int mapX = (int) (game.playerX / TILE_SIZE);
-        int mapY = (int) (game.playerY / TILE_SIZE);
+        int mapX = (int) (game.player.playerX / TILE_SIZE);
+        int mapY = (int) (game.player.playerY / TILE_SIZE);
 
         double deltaDistX = rayDirX == 0 ? 1e30 : Math.abs(TILE_SIZE / rayDirX);
         double deltaDistY = rayDirY == 0 ? 1e30 : Math.abs(TILE_SIZE / rayDirY);
         int    stepX, stepY;
         double sideDistX, sideDistY;
 
-        if (rayDirX < 0) { stepX = -1; sideDistX = (game.playerX - mapX * TILE_SIZE) * deltaDistX / TILE_SIZE; }
-        else             { stepX =  1; sideDistX = ((mapX + 1) * TILE_SIZE - game.playerX) * deltaDistX / TILE_SIZE; }
-        if (rayDirY < 0) { stepY = -1; sideDistY = (game.playerY - mapY * TILE_SIZE) * deltaDistY / TILE_SIZE; }
-        else             { stepY =  1; sideDistY = ((mapY + 1) * TILE_SIZE - game.playerY) * deltaDistY / TILE_SIZE; }
+        if (rayDirX < 0) { stepX = -1; sideDistX = (game.player.playerX - mapX * TILE_SIZE) * deltaDistX / TILE_SIZE; }
+        else             { stepX =  1; sideDistX = ((mapX + 1) * TILE_SIZE - game.player.playerX) * deltaDistX / TILE_SIZE; }
+        if (rayDirY < 0) { stepY = -1; sideDistY = (game.player.playerY - mapY * TILE_SIZE) * deltaDistY / TILE_SIZE; }
+        else             { stepY =  1; sideDistY = ((mapY + 1) * TILE_SIZE - game.player.playerY) * deltaDistY / TILE_SIZE; }
 
         boolean hit = false;
         int side = 0, wallType = 1;
@@ -626,16 +583,16 @@ public class Renderer {
             if (sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; side = 0; }
             else                       { sideDistY += deltaDistY; mapY += stepY; side = 1; }
             if (mapX < 0 || mapX >= mapSize || mapY < 0 || mapY >= mapSize) break;
-            int tile = game.getMapTile(mapX, mapY);
+            int tile = game.state.getMapTile(mapX, mapY);
             if (tile > 0) { hit = true; wallType = tile; }
         }
 
         double dist = (side == 0)
-                ? (mapX * TILE_SIZE - game.playerX + (1 - stepX) * TILE_SIZE / 2.0) / rayDirX
-                : (mapY * TILE_SIZE - game.playerY + (1 - stepY) * TILE_SIZE / 2.0) / rayDirY;
+                ? (mapX * TILE_SIZE - game.player.playerX + (1 - stepX) * TILE_SIZE / 2.0) / rayDirX
+                : (mapY * TILE_SIZE - game.player.playerY + (1 - stepY) * TILE_SIZE / 2.0) / rayDirY;
         if (dist <= 0) dist = 1;
 
-        double wallX = (side == 0) ? game.playerY + dist * rayDirY : game.playerX + dist * rayDirX;
+        double wallX = (side == 0) ? game.player.playerY + dist * rayDirY : game.player.playerX + dist * rayDirX;
         wallX %= TILE_SIZE;
         if (wallX < 0) wallX += TILE_SIZE;
 
@@ -643,29 +600,32 @@ public class Renderer {
         textureX = Math.max(0, Math.min(TEX_SIZE - 1, textureX));
         if ((side == 0 && rayDirX > 0) || (side == 1 && rayDirY < 0)) textureX = TEX_SIZE - 1 - textureX;
 
-        int[][] texture = (wallType == Door.DOOR_TILE)
-                ? (game.isExitOpen() ? Textures.DOOR_OPEN : Textures.DOOR)
-                : Textures.STONE;
+        int[][] texture;
+        if (wallType == Door.DOOR_TILE && game.state.isExitOpen()) {
+             texture = TextureFactory.createOpenDoor(); // Handle specific state override
+        } else {
+             texture = textureRegistry.get(wallType); // Cleanly fetch by ID!
+        }
         return new RayHit(dist, wallType, textureX, side, texture);
     }
 
     private double castRayDistance(double rayAngle) {
         double rayDirX = Math.cos(rayAngle);
         double rayDirY = Math.sin(rayAngle);
-        int    mapSize = game.config.mapSize;
+        int    mapSize = game.state.config.mapSize;
 
-        int mapX = (int) (game.playerX / TILE_SIZE);
-        int mapY = (int) (game.playerY / TILE_SIZE);
+        int mapX = (int) (game.player.playerX / TILE_SIZE);
+        int mapY = (int) (game.player.playerY / TILE_SIZE);
 
         double deltaDistX = rayDirX == 0 ? 1e30 : Math.abs(TILE_SIZE / rayDirX);
         double deltaDistY = rayDirY == 0 ? 1e30 : Math.abs(TILE_SIZE / rayDirY);
         int    stepX, stepY;
         double sideDistX, sideDistY;
 
-        if (rayDirX < 0) { stepX = -1; sideDistX = (game.playerX - mapX * TILE_SIZE) * deltaDistX / TILE_SIZE; }
-        else             { stepX =  1; sideDistX = ((mapX + 1) * TILE_SIZE - game.playerX) * deltaDistX / TILE_SIZE; }
-        if (rayDirY < 0) { stepY = -1; sideDistY = (game.playerY - mapY * TILE_SIZE) * deltaDistY / TILE_SIZE; }
-        else             { stepY =  1; sideDistY = ((mapY + 1) * TILE_SIZE - game.playerY) * deltaDistY / TILE_SIZE; }
+        if (rayDirX < 0) { stepX = -1; sideDistX = (game.player.playerX - mapX * TILE_SIZE) * deltaDistX / TILE_SIZE; }
+        else             { stepX =  1; sideDistX = ((mapX + 1) * TILE_SIZE - game.player.playerX) * deltaDistX / TILE_SIZE; }
+        if (rayDirY < 0) { stepY = -1; sideDistY = (game.player.playerY - mapY * TILE_SIZE) * deltaDistY / TILE_SIZE; }
+        else             { stepY =  1; sideDistY = ((mapY + 1) * TILE_SIZE - game.player.playerY) * deltaDistY / TILE_SIZE; }
 
         boolean hit = false;
         int side = 0;
@@ -673,14 +633,14 @@ public class Renderer {
             if (sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; side = 0; }
             else                       { sideDistY += deltaDistY; mapY += stepY; side = 1; }
             if (mapX < 0 || mapX >= mapSize || mapY < 0 || mapY >= mapSize) break;
-            if (game.getMapTile(mapX, mapY) > 0) hit = true;
+            if (game.state.getMapTile(mapX, mapY) > 0) hit = true;
         }
 
         double dist = (side == 0)
-                ? (mapX * TILE_SIZE - game.playerX + (1 - stepX) * TILE_SIZE / 2.0) / (rayDirX == 0 ? 1e-6 : rayDirX)
-                : (mapY * TILE_SIZE - game.playerY + (1 - stepY) * TILE_SIZE / 2.0) / (rayDirY == 0 ? 1e-6 : rayDirY);
+                ? (mapX * TILE_SIZE - game.player.playerX + (1 - stepX) * TILE_SIZE / 2.0) / (rayDirX == 0 ? 1e-6 : rayDirX)
+                : (mapY * TILE_SIZE - game.player.playerY + (1 - stepY) * TILE_SIZE / 2.0) / (rayDirY == 0 ? 1e-6 : rayDirY);
         if (dist <= 0) dist = 1;
-        return dist * Math.cos(rayAngle - game.playerAngle);
+        return dist * Math.cos(rayAngle - game.player.playerAngle);
     }
 
     // -----------------------------------------------------------------------

@@ -1,23 +1,12 @@
 package rendering;
+
 /**
- * Procedurally generated wall/door textures used by the raycaster renderer.
- * Each texture is a TEX_SIZE x TEX_SIZE array of packed RGB integers,
- * indexed as [column][row] (x, y).
+ * TextureFactory handles the procedural generation of textures.
  */
-class Textures {
-    private static final int TEX_SIZE = 64;
+public class TextureFactory {
+    public static final int TEX_SIZE = 64;
 
-    public static final int[][] BRICK = createBrick();
-    public static final int[][] WOOD = createWood();
-    public static final int[][] STONE = createStone();
-    public static final int[][] DOOR = createDoor();
-    public static final int[][] DOOR_OPEN = createOpenDoor();
-    public static final int[][] MARBLE = createMarble();
-
-    /**
-     * Alternating brick-color pattern.
-     */
-    private static int[][] createBrick() {
+    public static int[][] createBrick() {
         int[][] tex = new int[TEX_SIZE][TEX_SIZE];
         for (int y = 0; y < TEX_SIZE; y++) {
             for (int x = 0; x < TEX_SIZE; x++) {
@@ -28,27 +17,17 @@ class Textures {
         return tex;
     }
 
-    /**
-     * Vertical wood-plank stripes.
-     */
-    private static int[][] createWood() {
+    public static int[][] createWood() {
         int[][] tex = new int[TEX_SIZE][TEX_SIZE];
         for (int y = 0; y < TEX_SIZE; y++) {
             for (int x = 0; x < TEX_SIZE; x++) {
-                int base = 0xA07840;
-                if ((x % 8) == 0) {
-                    base = 0x7A542D;
-                }
-                tex[x][y] = base;
+                tex[x][y] = ((x % 8) == 0) ? 0x7A542D : 0xA07840;
             }
         }
         return tex;
     }
 
-    /**
-     * Green stone with slight per-pixel color variation.
-     */
-    private static int[][] createStone() {
+    public static int[][] createStone() {
         int[][] tex = new int[TEX_SIZE][TEX_SIZE];
         for (int y = 0; y < TEX_SIZE; y++) {
             for (int x = 0; x < TEX_SIZE; x++) {
@@ -63,27 +42,17 @@ class Textures {
         return tex;
     }
 
-    /**
-     * Diagonal marble-tile pattern.
-     */
-    private static int[][] createMarble() {
+    public static int[][] createMarble() {
         int[][] tex = new int[TEX_SIZE][TEX_SIZE];
         for (int y = 0; y < TEX_SIZE; y++) {
             for (int x = 0; x < TEX_SIZE; x++) {
-                int base = 0xC3B091;
-                if (((x + y) % 16) < 4) {
-                    base = 0xA8977A;
-                }
-                tex[x][y] = base;
+                tex[x][y] = (((x + y) % 16) < 4) ? 0xA8977A : 0xC3B091;
             }
         }
         return tex;
     }
 
-    /**
-     * Wooden door with a central panel.
-     */
-    private static int[][] createDoor() {
+    public static int[][] createDoor() {
         int[][] tex = new int[TEX_SIZE][TEX_SIZE];
         for (int y = 0; y < TEX_SIZE; y++) {
             for (int x = 0; x < TEX_SIZE; x++) {
@@ -97,10 +66,7 @@ class Textures {
         return tex;
     }
 
-    /**
-     * Solid white — represents the open-door passage.
-     */
-    private static int[][] createOpenDoor() {
+    public static int[][] createOpenDoor() {
         int[][] tex = new int[TEX_SIZE][TEX_SIZE];
         for (int y = 0; y < TEX_SIZE; y++) {
             for (int x = 0; x < TEX_SIZE; x++) {
