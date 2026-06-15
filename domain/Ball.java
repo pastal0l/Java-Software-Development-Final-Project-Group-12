@@ -1,14 +1,16 @@
 package domain;
-public class Ball {
-    public final double x;
-    public final double y;
 
-    // domain/Ball.java — add these two methods
-    public double getX() { return x; }
-    public double getY() { return y; }
+import entity.Entity;
 
-    public Ball(double x, double y) {
-        this.x = x;
-        this.y = y;
+public class Ball extends Entity {
+
+    public Ball(double startX, double startY) {
+        // Pass the starting coordinates up to the Entity class
+        super(startX, startY);
+    }
+
+    @Override
+    public void update(double playerX, double playerY, int[][] map, int tileSize) {
+        // Balls are static items, so they don't do anything on update!
     }
 }

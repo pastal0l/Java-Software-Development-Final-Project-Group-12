@@ -5,8 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
-public class MonsterEntity {
-
+public class MonsterEntity extends Entity {
     private static final double WALK_SPEED        = 1.0;
     private static final double CHASE_SPEED       = 2.2;
     private static final double COLLISION_RADIUS  = 16.0;
@@ -15,7 +14,6 @@ public class MonsterEntity {
     private final int    tileSize;
     private final Random random = new Random();
 
-    private double  x, y;
     private double  directionX = 1, directionY = 0;
     private boolean chasing      = false;
     private boolean pursuitActive = false;
@@ -26,20 +24,21 @@ public class MonsterEntity {
     private long                  ignoreSightUntil     = 0;
 
     public MonsterEntity(int tileX, int tileY, int tileSize) {
+        // Pass calculated starting coordinates to Entity
+        super(tileX * tileSize + tileSize / 2.0, tileY * tileSize + tileSize / 2.0);
         this.tileSize = tileSize;
-        this.x = tileX * tileSize + tileSize / 2.0;
-        this.y = tileY * tileSize + tileSize / 2.0;
     }
 
     public void reset(int tileX, int tileY) {
-        x = tileX * tileSize + tileSize / 2.0;
-        y = tileY * tileSize + tileSize / 2.0;
+        x = tileX * tileSize + tileSize / 2.0; // Accessing protected 'x' from Entity
+        y = tileY * tileSize + tileSize / 2.0; // Accessing protected 'y' from Entity
         directionX = 1; directionY = 0;
         chasing = false; pursuitActive = false;
         stuckFrames = 0; ignoreSightUntil = 0;
         currentPath.clear();
     }
 
+    @Override // <--- Added Override annotation
     public void update(double playerX, double playerY, int[][] map, int tileSize) {
         long now = System.currentTimeMillis();
         boolean visible = (now >= ignoreSightUntil) && canSeePlayer(playerX, playerY, map, tileSize);
@@ -86,14 +85,9 @@ public class MonsterEntity {
     }
 
     // ── getters ──────────────────────────────────────────────────────────────
-
-    public double  getX()        { return x; }
-    public double  getY()        { return y; }
     public int     getTileSize() { return tileSize; }
     public boolean isChasing()   { return chasing; }
-
-    /** Used by server in multiplayer to override server-authoritative position. */
-    public void setPosition(double x, double y) { this.x = x; this.y = y; }
+    
     /** Used by client-side rendering to reflect server state. */
     public void setChasing(boolean chasing)      { this.chasing = chasing; }
 

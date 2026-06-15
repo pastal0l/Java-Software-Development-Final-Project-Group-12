@@ -104,7 +104,7 @@ public class GameState {
         boolean collected    = false;
         for (int i = balls.size() - 1; i >= 0; i--) {
             Ball b = balls.get(i);
-            double dx = playerX - b.x, dy = playerY - b.y;
+            double dx = playerX - b.getX(), dy = playerY - b.getY();
             if (dx * dx + dy * dy <= pickupRadius * pickupRadius) {
                 balls.remove(i);
                 collected = true;
@@ -158,8 +158,8 @@ public class GameState {
             if ((tx == START_TILE_X && ty == START_TILE_Y)
                     || (tx == exitTileX && ty == exitTileY)) continue;
             boolean occupied = balls.stream().anyMatch(
-                b -> (int)(b.x / GamePanel.TILE_SIZE) == tx
-                  && (int)(b.y / GamePanel.TILE_SIZE) == ty);
+                b -> (int)(b.getX() / GamePanel.TILE_SIZE) == tx
+                  && (int)(b.getY() / GamePanel.TILE_SIZE) == ty);
             if (occupied) continue;
             balls.add(new Ball(
                 tx * GamePanel.TILE_SIZE + GamePanel.TILE_SIZE / 2.0,
