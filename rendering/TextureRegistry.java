@@ -15,7 +15,7 @@ public class TextureRegistry {
 
     public TextureRegistry() {
         // Map block IDs from your MazeGenerator to specific textures
-        register(1, TextureFactory.createBrick());
+        register(1, TextureFactory.getWall());
         register(2, TextureFactory.createWood());
         register(3, TextureFactory.createStone());
         register(4, TextureFactory.createMarble());

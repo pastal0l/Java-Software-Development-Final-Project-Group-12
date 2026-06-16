@@ -73,46 +73,44 @@ public class Renderer implements IRenderer {
 
         int horizon = height / 2;
 
-        // Sky gradient (dark at top → lighter near horizon)
+        // ── Sky: flat dark-navy + hash-based stars that drift with playerAngle ──
+        int skyColor   = (18 << 16) | (24 << 8) | 60;
+        int starShift  = (int) (game.player.playerAngle * 300.0);
         for (int y = 0; y < horizon; y++) {
             int off = y * width;
-            int t = y * 255 / Math.max(1, horizon);
-            int skyR = 10 + t *  8 / 255;
-            int skyG = 10 + t * 14 / 255;
-            int skyB = 40 + t * 20 / 255;
-            int skyColorGrad = (skyR << 16) | (skyG << 8) | skyB;
-            for (int x = 0; x < width; x++) screenPixels[off + x] = skyColorGrad;
-        }
-
-        // Stars (seeded, twinkling via floatPhase)
-        java.util.Random starRng = new java.util.Random(42);
-        for (int i = 0; i < 200; i++) {
-            int sx = starRng.nextInt(Math.max(1, width));
-            int sy = starRng.nextInt(Math.max(1, horizon));
-            double twinkle = 0.7 + 0.3 * Math.sin(game.state.floatPhase * 2.0 + i * 0.7);
-            int br = (int) (twinkle * 255);
-            screenPixels[sy * width + sx] = (br << 16) | (br << 8) | br;
-        }
-
-        // Moon
-        int moonX = width * 3 / 4, moonY = horizon / 4, moonR = 18;
-        for (int my = Math.max(0, moonY - moonR); my <= Math.min(horizon - 1, moonY + moonR); my++) {
-            for (int mx = Math.max(0, moonX - moonR); mx <= Math.min(width - 1, moonX + moonR); mx++) {
-                int ddx = mx - moonX, ddy = my - moonY;
-                if (ddx * ddx + ddy * ddy <= moonR * moonR)
-                    screenPixels[my * width + mx] = 0xFFF8DC;
+            for (int x = 0; x < width; x++) {
+                int color = skyColor;
+                int hash = (x + starShift) * 374761393 + y * 668265263;
+                hash = (hash ^ (hash >> 13)) * 1274126177;
+                hash ^= (hash >>> 16);
+                int twinkle = hash & 0x3FF;
+                if (y < horizon - horizon / 8) {
+                    if      (twinkle == 0) color = 0xFFFFFF;   // bright star
+                    else if (twinkle <  4) color = 0x9AA0C8;   // dim star
+                }
+                screenPixels[off + x] = color;
             }
         }
 
-        // Grass floor gradient
+        // Crescent moon that tracks playerAngle across the sky
+        drawMoon(screenPixels, width, height, horizon, skyColor);
+
+        // ── Floor: grassy green + depth shading + speckled grass blades ──
+        int floorColor = (46 << 16) | (94 << 8) | 42;
         for (int y = horizon; y < height; y++) {
+            double t = (height == horizon) ? 1.0 : (y - horizon) / (double) (height - horizon);
+            int baseColor = shadeColor(floorColor, 0.45 + 0.55 * t);
             int off = y * width;
-            double depth = (double) (y - horizon) / Math.max(1, height - horizon);
-            int gr = (int) (18 + depth * 12);
-            int gg = (int) (48 + depth * 32);
-            int gb = (int) (14 + depth * 12);
-            int grassColor = (gr << 16) | (gg << 8) | gb;
-            for (int x = 0; x < width; x++) screenPixels[off + x] = grassColor;
+            for (int x = 0; x < width; x++) {
+                int hash = x * 374761393 + y * 668265263;
+                hash = (hash ^ (hash >> 13)) * 1274126177;
+                hash ^= (hash >>> 16);
+                int speck = hash & 0xFF;
+                int color = baseColor;
+                if      (speck <  10)  color = shadeColor(baseColor, 1.30); // light blade
+                else if (speck > 246)  color = shadeColor(baseColor, 0.65); // dark soil
+                screenPixels[off + x] = color;
+            }
         }
 
         double fov        = Math.toRadians(60);
@@ -157,6 +155,48 @@ public class Renderer implements IRenderer {
         g.drawImage(screenBuffer, 0, 0, null);
         drawAllMonsterSprites(g, width, height);
         drawRemotePlayerSprite(g, width, height);
+    }
+
+    /**
+     * Crescent moon at a fixed world direction; slides across the sky as the
+     * player turns so it feels like a real distant object.
+     */
+    private void drawMoon(int[] pixels, int width, int height, int horizon, int skyColor) {
+        double moonWorldAngle = Math.toRadians(120);
+        double skySpan        = Math.toRadians(180);
+        double relAngle       = normalizeAngle(moonWorldAngle - game.player.playerAngle);
+        if (Math.abs(relAngle) > skySpan / 2) return;
+
+        int moonRadius = Math.max(14, height / 16);
+        int glowRadius = (int) (moonRadius * 1.8);
+        int moonX = (int) (width / 2.0 + (relAngle / (skySpan / 2.0)) * (width / 2.0 + glowRadius));
+        int moonY = horizon / 3;
+
+        int moonColor = 0xF4F1D8;
+        int glowColor = 0x9FA6C0;
+
+        double crescentX = moonX + moonRadius * 0.45;
+        double crescentY = moonY - moonRadius * 0.25;
+        double crescentR = moonRadius * 0.85;
+
+        int xMin = Math.max(0,         moonX - glowRadius);
+        int xMax = Math.min(width - 1, moonX + glowRadius);
+        int yMin = Math.max(0,          moonY - glowRadius);
+        int yMax = Math.min(horizon - 1, moonY + glowRadius);
+
+        for (int y = yMin; y <= yMax; y++) {
+            int rowOff = y * width;
+            for (int x = xMin; x <= xMax; x++) {
+                double dist = Math.hypot(x - moonX, y - moonY);
+                if (dist <= moonRadius) {
+                    double craterDist = Math.hypot(x - crescentX, y - crescentY);
+                    pixels[rowOff + x] = (craterDist <= crescentR) ? skyColor : moonColor;
+                } else if (dist <= glowRadius) {
+                    double f = 1.0 - (dist - moonRadius) / (glowRadius - moonRadius);
+                    pixels[rowOff + x] = lerpColor(skyColor, glowColor, f * 0.5);
+                }
+            }
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -711,6 +751,14 @@ public class Renderer implements IRenderer {
         int g = (int) Math.max(0, Math.min(255, ((rgb >>  8) & 0xFF) * factor));
         int b = (int) Math.max(0, Math.min(255, ( rgb        & 0xFF) * factor));
         return (r << 16) | (g << 8) | b;
+    }
+
+    private int lerpColor(int c0, int c1, double t) {
+        int r0 = (c0 >> 16) & 0xFF, g0 = (c0 >>  8) & 0xFF, b0 = c0 & 0xFF;
+        int r1 = (c1 >> 16) & 0xFF, g1 = (c1 >>  8) & 0xFF, b1 = c1 & 0xFF;
+        return ((int)(r0 + (r1 - r0) * t) << 16)
+             | ((int)(g0 + (g1 - g0) * t) <<  8)
+             |  (int)(b0 + (b1 - b0) * t);
     }
 
     private double normalizeAngle(double angle) {
