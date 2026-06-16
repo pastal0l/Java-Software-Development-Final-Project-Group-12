@@ -20,6 +20,7 @@ public interface INetworkClient {
     double[] getMonsterX();
     double[] getMonsterY();
     boolean[] getMonsterChasing();
+    double[] getMonsterAngle();
     Queue<int[]> getDiamondsTaken();
     void sendPosition(double x, double y, double angle);
     void disconnect();

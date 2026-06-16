@@ -288,10 +288,15 @@ public class GamePanel extends JPanel implements ActionListener {
         if (nc.isServerDoorOpen() && !state.door.isOpen()) state.door.open();
 
         double[] mx = nc.getMonsterX(), my = nc.getMonsterY();
-        boolean[] mch = nc.getMonsterChasing();
+        boolean[] mch  = nc.getMonsterChasing();
+        double[]  mang = nc.getMonsterAngle();
         for (int i = 0; i < Math.min(state.monsters.size(), mx.length); i++) {
             state.monsters.get(i).setPosition(mx[i], my[i]);
             state.monsters.get(i).setChasing(mch[i]);
+            if (mang != null && i < mang.length) {
+                double fa = mang[i];
+                state.monsters.get(i).setDirection(Math.cos(fa), Math.sin(fa));
+            }
         }
 
         if (remotePlayer != null) {

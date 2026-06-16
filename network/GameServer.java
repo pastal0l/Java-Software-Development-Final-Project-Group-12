@@ -140,7 +140,8 @@ public class GameServer implements Runnable {
         for (var m : monsters)
             sb.append(',').append(m.getX())
               .append(',').append(m.getY())
-              .append(',').append(m.isChasing() ? "1" : "0");
+              .append(',').append(m.isChasing() ? "1" : "0")
+              .append(',').append(m.getFacingAngle());
 
         sb.append(',').append(logic.getRemainingTime());
         broadcast(sb.toString());

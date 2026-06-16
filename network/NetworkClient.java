@@ -45,10 +45,11 @@ public class NetworkClient implements INetworkClient {
     private volatile boolean nextLevelReady       = false;
     private volatile boolean levelCompleteScreen  = false;
 
-    /** Per-monster positions and chase flag (length = monsterCount). */
+    /** Per-monster positions, chase flag, and facing angle (length = monsterCount). */
     private volatile double[]  monsterX       = new double[0];
     private volatile double[]  monsterY       = new double[0];
     private volatile boolean[] monsterChasing = new boolean[0];
+    private volatile double[]  monsterAngle   = new double[0];
 
     /**
      * World coordinates of diamonds the server has confirmed as collected.
@@ -166,6 +167,9 @@ public class NetworkClient implements INetworkClient {
 
     @Override
     public boolean[] getMonsterChasing() { return monsterChasing; }
+
+    @Override
+    public double[] getMonsterAngle() { return monsterAngle; }
 
     @Override
     public Queue<int[]> getDiamondsTaken() { return diamondsTaken; }
@@ -321,17 +325,20 @@ public class NetworkClient implements INetworkClient {
             }
 
             int mc = Integer.parseInt(t[i++]);
-            double[]  mx  = new double[mc];
-            double[]  my  = new double[mc];
-            boolean[] mch = new boolean[mc];
+            double[]  mx   = new double[mc];
+            double[]  my   = new double[mc];
+            boolean[] mch  = new boolean[mc];
+            double[]  mang = new double[mc];
             for (int m = 0; m < mc; m++) {
-                mx[m]  = Double.parseDouble(t[i++]);
-                my[m]  = Double.parseDouble(t[i++]);
-                mch[m] = t[i++].equals("1");
+                mx[m]   = Double.parseDouble(t[i++]);
+                my[m]   = Double.parseDouble(t[i++]);
+                mch[m]  = t[i++].equals("1");
+                mang[m] = Double.parseDouble(t[i++]);
             }
             monsterX       = mx;
             monsterY       = my;
             monsterChasing = mch;
+            monsterAngle   = mang;
 
             serverTimeMs = Long.parseLong(t[i]);
 

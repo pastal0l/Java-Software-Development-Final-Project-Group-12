@@ -47,14 +47,16 @@ public class MonsterEntity extends Entity {
         double dy = playerY - y;
         double distance = Math.sqrt(dx * dx + dy * dy);
 
-        if (visible && distance <= MAX_CHASE_DISTANCE) {
+        // Only START chasing if player is inside the front FOV cone (±60°).
+        // Once pursuitActive is set, keep chasing until sight is lost — player
+        // can't escape just by sneaking behind the monster mid-chase.
+        boolean inFOV = inFrontFOV(playerX, playerY, 0.5); // cos(60°) = 0.5
+
+        if (visible && distance <= MAX_CHASE_DISTANCE && (inFOV || pursuitActive)) {
             pursuitActive = true;
             chasing = true;
             currentPath.clear();
             moveToTarget(playerX, playerY, CHASE_SPEED, map, tileSize);
-        } else if (pursuitActive && visible && distance <= MAX_CHASE_DISTANCE) {
-            chasing = true;
-            followAStarPath(playerX, playerY, map, tileSize, CHASE_SPEED);
         } else {
             pursuitActive = false;
             chasing = false;
@@ -85,21 +87,35 @@ public class MonsterEntity extends Entity {
     }
 
     // ── getters ──────────────────────────────────────────────────────────────
-    public int     getTileSize() { return tileSize; }
-    public boolean isChasing()   { return chasing; }
-    
-    /** Used by client-side rendering to reflect server state. */
-    public void setChasing(boolean chasing)      { this.chasing = chasing; }
+    public int     getTileSize()   { return tileSize; }
+    public boolean isChasing()     { return chasing; }
 
-    /** Returns true if the monster is roughly facing toward the player (dot product > 0). */
-    public boolean isFacingPlayer(double playerX, double playerY) {
+    /** Facing angle in radians derived from the current movement direction. */
+    public double getFacingAngle() { return Math.atan2(directionY, directionX); }
+
+    /** Used by client-side rendering to reflect server state. */
+    public void setChasing(boolean chasing)        { this.chasing = chasing; }
+
+    /** Used by client-side rendering to reflect server movement direction. */
+    public void setDirection(double dx, double dy) { directionX = dx; directionY = dy; }
+
+    /**
+     * Returns true if the player is inside the monster's front FOV cone.
+     * minDot = cos(half-angle): 0.5 → ±60°,  0.0 → ±90°.
+     */
+    private boolean inFrontFOV(double playerX, double playerY, double minDot) {
         if (directionX == 0 && directionY == 0) return true;
         double dx = playerX - x;
         double dy = playerY - y;
         double dist = Math.sqrt(dx * dx + dy * dy);
         if (dist < 1e-3) return true;
         double dot = (dx / dist) * directionX + (dy / dist) * directionY;
-        return dot > 0.0;
+        return dot >= minDot;
+    }
+
+    /** Returns true if monster is roughly facing the player (front/back sprite selection). */
+    public boolean isFacingPlayer(double playerX, double playerY) {
+        return inFrontFOV(playerX, playerY, 0.0); // ±90° for sprite orientation
     }
 
     // ── private movement helpers (unchanged logic) ────────────────────────

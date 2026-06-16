@@ -3,6 +3,10 @@ package rendering;
 import java.awt.Color;
 import java.awt.Font;
 import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.geom.Area;
+import java.awt.geom.Ellipse2D;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
 
@@ -442,6 +446,9 @@ public class Renderer implements IRenderer {
         g.drawString(label, x + 3, y + h - 2);
     }
 
+    /** World-pixel hearing radius shown on minimap (half the full audio range). */
+    private static final double HEAR_RADIUS_WORLD = 640.0 * 0.98 / 2.0; // ≈ 314
+
     private void drawMinimap(Graphics g, GameState state, double playerX, double playerY, double playerAngle, RemotePlayer rp) {
         int mapSize = state.config.mapSize;
         int tilePx  = MINIMAP_PX / mapSize;
@@ -463,14 +470,35 @@ public class Renderer implements IRenderer {
             }
         }
 
+        // ── Proximity fog-of-war ─────────────────────────────────────────────
         int px = (int) (playerX / TILE_SIZE * tilePx);
         int py = (int) (playerY / TILE_SIZE * tilePx);
+        // Hearing radius converted to minimap pixels
+        int hearPx = (int) (HEAR_RADIUS_WORLD / TILE_SIZE * tilePx);
+
+        Graphics2D g2 = (Graphics2D) g;
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+        // Dark overlay everywhere outside the hear circle, clipped to minimap bounds
+        Area fog = new Area(new java.awt.Rectangle(offsetX, offsetY, mapPx, mapPx));
+        fog.subtract(new Area(new Ellipse2D.Double(
+                offsetX + px - hearPx, offsetY + py - hearPx,
+                hearPx * 2, hearPx * 2)));
+        g2.setColor(new Color(0, 0, 0, 165));
+        g2.fill(fog);
+
+        // Subtle circle edge (hearing boundary)
+        g2.setColor(new Color(220, 200, 100, 110));
+        g2.drawOval(offsetX + px - hearPx, offsetY + py - hearPx, hearPx * 2, hearPx * 2);
+
+        // ── Player dot + direction line ──────────────────────────────────────
         g.setColor(Color.RED);
         g.fillOval(offsetX + px - 4, offsetY + py - 4, 8, 8);
         g.drawLine(offsetX + px, offsetY + py,
                    offsetX + px + (int) (Math.cos(playerAngle) * 10),
                    offsetY + py + (int) (Math.sin(playerAngle) * 10));
 
+        // ── Remote player dot ────────────────────────────────────────────────
         if (rp != null) {
             int rpx = (int) (rp.x / TILE_SIZE * tilePx);
             int rpy = (int) (rp.y / TILE_SIZE * tilePx);
@@ -483,17 +511,18 @@ public class Renderer implements IRenderer {
         }
 
         g.setColor(Color.BLUE);
-        // Assuming GameState START_TILE is (1, 1) per standard logic
-        g.fillOval(offsetX + 1 * tilePx + 2, offsetY + 1 * tilePx + 2, 6, 6);
+        g.fillOval(offsetX + tilePx + 2, offsetY + tilePx + 2, 6, 6);
 
         for (Item item : state.items) {
             int itemPx = offsetX + (int) (item.getX() / TILE_SIZE * tilePx);
             int itemPy = offsetY + (int) (item.getY() / TILE_SIZE * tilePx);
-            
             item.drawOnMinimap(g, itemPx, itemPy);
         }
 
+        // ── Monsters: only show within hearing range ─────────────────────────
         for (MonsterEntity m : state.monsters) {
+            double distWorld = Math.hypot(m.getX() - playerX, m.getY() - playerY);
+            if (distWorld > HEAR_RADIUS_WORLD) continue; // outside hearing range — hidden
             MonsterRenderer renderer = new MonsterRenderer(m);
             renderer.drawOnMinimap(g, offsetX, offsetY, tilePx);
         }
