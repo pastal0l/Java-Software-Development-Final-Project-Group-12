@@ -11,7 +11,7 @@ import javax.imageio.ImageIO;
  * indexed as [column][row] (x, y).
  */
 public class TextureFactory {
-    public static final int TEX_SIZE = 64;
+    public static final int TEX_SIZE = 128;
 
     // ── Static texture instances ──────────────────────────────────────────
 
@@ -23,21 +23,50 @@ public class TextureFactory {
     public static final int[][] MARBLE    = createMarble();
 
     /**
-     * Wall texture loaded from bush.png; falls back to STONE if missing.
-     * Loaded lazily on first call to getWall() so the CWD is stable.
+     * Procedural hedge/bush wall texture — bright green leafy pattern.
+     * No file loading required.
      */
-    private static int[][] wallCache = null;
-    public static int[][] getWall() {
-        if (wallCache == null) {
-            wallCache = loadImageTexture(
-                new String[]{
-                    "asset/bush.png", "asset/bush.jpg",
-                    "bush.png",       "bush.jpg", "bush.jpeg",
-                    "textures/bush.png", "textures/bush.jpg"
-                },
-                STONE);
+    public static int[][] createBush() {
+        int[][] tex = new int[TEX_SIZE][TEX_SIZE];
+        // Base leaf colors: bright greens
+        int[] leafColors = { 0x2E8B2E, 0x3AAA3A, 0x4CBF4C, 0x228B22, 0x56C456, 0x1E7A1E };
+        for (int y = 0; y < TEX_SIZE; y++) {
+            for (int x = 0; x < TEX_SIZE; x++) {
+                // Cheap hash for varied color and "leaf clump" pattern
+                int h = (x * 374761393) ^ (y * 668265263);
+                h = (h ^ (h >> 13)) * 1274126177;
+                h ^= (h >> 16);
+
+                // Large leaf-clump blobs via low-frequency component
+                int blobX = x / 4, blobY = y / 4;
+                int blobH = (blobX * 73856093) ^ (blobY * 19349663);
+                blobH = (blobH ^ (blobH >> 13)) * 83492791;
+                int blobColor = leafColors[Math.abs(blobH) % leafColors.length];
+
+                // Fine detail: darken "gaps" between leaves
+                int detail = h & 0xFF;
+                double shade;
+                if (detail < 20)       shade = 0.45; // dark gap/shadow
+                else if (detail < 60)  shade = 0.75; // mid leaf shadow
+                else if (detail > 230) shade = 1.35; // bright highlight
+                else                   shade = 1.0 + (detail - 140) * 0.003;
+
+                tex[x][y] = shadeRGB(blobColor, shade);
+            }
         }
-        return wallCache;
+        return tex;
+    }
+
+    public static int[][] getWall() {
+        // Try loading the real image first; use procedural bush if file not found
+        int[][] loaded = loadImageTexture(
+            new String[]{
+                "asset/bush.png", "asset/bush.jpg",
+                "bush.png", "bush.jpg", "bush.jpeg",
+                "textures/bush.png", "textures/bush.jpg"
+            },
+            null);
+        return loaded != null ? loaded : createBush();
     }
 
     // ── Procedural generators ─────────────────────────────────────────────
@@ -187,9 +216,7 @@ public class TextureFactory {
                 }
             }
         }
-        System.err.println("[TextureFactory] Could not load texture. CWD="
-            + System.getProperty("user.dir") + "  projectRoot=" + projectRoot);
-        return fallback;
+        return fallback; // null when called from getWall() → triggers createBush()
     }
 
     /**
@@ -229,4 +256,11 @@ public class TextureFactory {
     // ── Helpers ───────────────────────────────────────────────────────────
 
     private static int clamp(int v) { return Math.max(0, Math.min(255, v)); }
+
+    private static int shadeRGB(int rgb, double f) {
+        int r = clamp((int)(((rgb >> 16) & 0xFF) * f));
+        int g = clamp((int)(((rgb >>  8) & 0xFF) * f));
+        int b = clamp((int)( (rgb        & 0xFF) * f));
+        return (r << 16) | (g << 8) | b;
+    }
 }

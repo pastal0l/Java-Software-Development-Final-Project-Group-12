@@ -114,7 +114,7 @@ public class Renderer implements IRenderer {
         }
 
         double fov        = Math.toRadians(60);
-        int    rayCount   = width / 2;
+        int    rayCount   = width;
         double rayStep    = fov / rayCount;
         double startAngle = game.player.playerAngle - fov / 2;
         double[] rayDistances = new double[rayCount];
@@ -129,23 +129,19 @@ public class Renderer implements IRenderer {
             int lineOffset = horizon - lineHeight / 2;
             int drawStart  = Math.max(0, lineOffset);
             int drawEnd    = Math.min(height - 1, lineOffset + lineHeight);
-            int screenX    = ray * 2;
-            if (screenX < 0) continue;
+            int px = ray;
+            if (px < 0 || px >= width) continue;
 
-            for (int xOff = 0; xOff < 2; xOff++) {
-                int px = screenX + xOff;
-                if (px < 0 || px >= width) continue;
-                for (int y = drawStart; y <= drawEnd; y++) {
-                    int texY  = Math.max(0, Math.min(TEX_SIZE - 1,
-                            (int) (((y - lineOffset) * TEX_SIZE) / (double) lineHeight)));
-                    int color = hit.texture[hit.textureX][texY];
-                    if (!(hit.wallType == Door.DOOR_TILE && game.state.isExitOpen())) {
-                        if (hit.side == 1) color = shadeColor(color, 0.70);
-                        color = shadeColor(color,
-                                Math.max(0.20, 1.0 / (1.0 + correctedDist * correctedDist * 0.00005)));
-                    }
-                    screenPixels[y * width + px] = color;
+            for (int y = drawStart; y <= drawEnd; y++) {
+                int texY  = Math.max(0, Math.min(TEX_SIZE - 1,
+                        (int) (((y - lineOffset) * TEX_SIZE) / (double) lineHeight)));
+                int color = hit.texture[hit.textureX][texY];
+                if (!(hit.wallType == Door.DOOR_TILE && game.state.isExitOpen())) {
+                    if (hit.side == 1) color = shadeColor(color, 0.70);
+                    color = shadeColor(color,
+                            Math.max(0.20, 1.0 / (1.0 + correctedDist * correctedDist * 0.00005)));
                 }
+                screenPixels[y * width + px] = color;
             }
         }
 
@@ -347,7 +343,7 @@ public class Renderer implements IRenderer {
 
             for (int sx = spriteLeft; sx < spriteRight; sx++) {
                 if (sx < 0 || sx >= width) continue;
-                int rayIndex = sx / 2;
+                int rayIndex = sx;
                 if (rayIndex < 0 || rayIndex >= rayCount) continue;
                 if (distance * Math.cos(angleDiff) >= rayDistances[rayIndex] - 1) continue;
                 for (int sy = spriteTop; sy < spriteBottom; sy++) {
