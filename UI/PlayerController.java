@@ -1,8 +1,10 @@
 package UI;
 
-import audio.SoundPlayer;
+import audio.ISoundPlayer;
+import static domain.GameConstants.TILE_SIZE;
+import domain.IPlayer;
 
-public class PlayerController {
+public class PlayerController implements IPlayer {
 
     private static final double MOVE_SPEED           = 3.5;
     private static final double SPRINT_SPEED         = 6.5;
@@ -13,7 +15,7 @@ public class PlayerController {
 
     public static final double MAX_STAMINA              = 100.0;
     private static final double STAMINA_DRAIN           = 25.0;
-    private static final double STAMINA_REGEN           = 12.5;
+    private static final double STAMINA_REGEN           = 12.5; 
     private static final double STAMINA_EXHAUST_THRESHOLD = 20.0;
 
     public double  playerX;
@@ -25,12 +27,23 @@ public class PlayerController {
 
     private final GameState state;
     private long   lastFootstepTime = 0;
+    private final ISoundPlayer sound;
 
-    public PlayerController(GameState state, double startX, double startY, double startAngle) {
+    @Override
+    public double getX() {
+        return playerX;
+    }
+    @Override
+    public double getY() {
+        return playerY;
+    }
+
+    public PlayerController(GameState state, double startX, double startY, double startAngle, ISoundPlayer sound) {
         this.state       = state;
         this.playerX     = startX;
         this.playerY     = startY;
         this.playerAngle = startAngle;
+        this.sound = sound;
     }
 
     public void reset(double startX, double startY, double startAngle) {
@@ -78,7 +91,7 @@ public class PlayerController {
             long now      = System.currentTimeMillis();
             int  interval = sprinting ? SPRINT_FOOTSTEP_MS : FOOTSTEP_INTERVAL_MS;
             if (now - lastFootstepTime >= interval) {
-                SoundPlayer.playFootstep();
+                sound.playFootstep();
                 lastFootstepTime = now;
             }
         }
@@ -86,7 +99,7 @@ public class PlayerController {
 
     private boolean collides(double x, double y) {
         return state.isWallTile(
-            (int) x / GamePanel.TILE_SIZE,
-            (int) y / GamePanel.TILE_SIZE);
+            (int) x / TILE_SIZE,
+            (int) y / TILE_SIZE);
     }
 }

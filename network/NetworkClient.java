@@ -5,8 +5,6 @@ import java.net.*;
 import java.util.*;
 import java.util.concurrent.*;
 
-import UI.GamePanel;
-
 /**
  * Thin TCP client used by {@link GamePanel} in multiplayer mode.
  *
@@ -19,42 +17,42 @@ import UI.GamePanel;
  * thread are {@code volatile}.  Diamond-taken events use a
  * {@link ConcurrentLinkedQueue} for safe cross-thread delivery.</p>
  */
-public class NetworkClient {
+public class NetworkClient implements INetworkClient {
 
     // -----------------------------------------------------------------------
     // Identity (set during setup)
     // -----------------------------------------------------------------------
-    public volatile int    myPlayerId = -1;
-    public volatile int    levelIdx   = 0;
+    private volatile int    myPlayerId = -1;
+    private volatile int    levelIdx   = 0;
 
     // Map data (set during setup, then immutable)
-    public volatile int[][]      serverMap;
+    private volatile int[][]      serverMap;
     public volatile int          mapSize;
-    public volatile List<double[]> serverBalls = new ArrayList<>();
+    private volatile List<double[]> serverBalls = new ArrayList<>();
 
     // -----------------------------------------------------------------------
     // Game state (written by reader thread, read on game thread)
     // -----------------------------------------------------------------------
-    public volatile double  remotePlayerX;
-    public volatile double  remotePlayerY;
-    public volatile double  remotePlayerAngle;
+    private volatile double  remotePlayerX;
+    private volatile double  remotePlayerY;
+    private volatile double  remotePlayerAngle;
 
-    public volatile long    serverTimeMs;
-    public volatile boolean serverDoorOpen = false;
-    public volatile boolean gameOver          = false;
-    public volatile boolean gameWon           = false;
-    public volatile boolean remotePlayerLeft  = false;
+    private volatile long    serverTimeMs;
+    private volatile boolean serverDoorOpen = false;
+    private volatile boolean gameOver          = false;
+    private volatile boolean gameWon           = false;
+    private volatile boolean remotePlayerLeft  = false;
 
     /** Per-monster positions and chase flag (length = monsterCount). */
-    public volatile double[]  monsterX       = new double[0];
-    public volatile double[]  monsterY       = new double[0];
-    public volatile boolean[] monsterChasing = new boolean[0];
+    private volatile double[]  monsterX       = new double[0];
+    private volatile double[]  monsterY       = new double[0];
+    private volatile boolean[] monsterChasing = new boolean[0];
 
     /**
      * World coordinates of diamonds the server has confirmed as collected.
      * GamePanel polls this queue each frame.  Each entry is {@code int[]{wx,wy}}.
      */
-    public final Queue<int[]> diamondsTaken = new ConcurrentLinkedQueue<>();
+    private final Queue<int[]> diamondsTaken = new ConcurrentLinkedQueue<>();
 
     // -----------------------------------------------------------------------
     // Private
@@ -78,6 +76,7 @@ public class NetworkClient {
      *                   may be {@code null}
      * @throws IOException if the connection or setup fails
      */
+    @Override
     public void connect(String host, int port, Runnable onWaiting) throws IOException {
         socket = new Socket(host, port);
         writer = new PrintWriter(
@@ -91,6 +90,58 @@ public class NetworkClient {
         t.setDaemon(true);
         t.start();
     }
+
+    @Override
+    public int getMapSize() { return mapSize; }
+    
+    @Override
+    public int getPlayerId() { return myPlayerId; }
+
+    @Override
+    public int getLevelIdx() { return levelIdx; }
+
+    @Override
+    public int[][] getServerMap() { return serverMap; }
+
+    @Override
+    public List<double[]> getServerBalls() { return serverBalls; }
+
+    @Override
+    public long getServerTimeMs() { return serverTimeMs; }
+
+    @Override
+    public boolean isServerDoorOpen() { return serverDoorOpen; }
+
+    @Override
+    public boolean isGameOver() { return gameOver; }
+
+    @Override
+    public boolean isGameWon() { return gameWon; }
+
+    @Override
+    public boolean isRemotePlayerLeft() { return remotePlayerLeft; }
+
+    @Override
+    public double getRemotePlayerX() { return remotePlayerX; }
+
+    @Override
+    public double getRemotePlayerY() { return remotePlayerY; }
+
+    @Override
+    public double getRemotePlayerAngle() { return remotePlayerAngle; }
+
+    @Override
+    public double[] getMonsterX() { return monsterX; }
+
+    @Override
+    public double[] getMonsterY() { return monsterY; }
+
+    @Override
+    public boolean[] getMonsterChasing() { return monsterChasing; }
+
+    @Override
+    public Queue<int[]> getDiamondsTaken() { return diamondsTaken; }
+
 
     /** Send our current position to the server (called every game frame). */
     public void sendPosition(double x, double y, double angle) {

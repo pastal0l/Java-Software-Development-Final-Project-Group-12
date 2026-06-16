@@ -1,21 +1,22 @@
 package UI;
 
-import audio.SoundPlayer;
+import audio.ISoundPlayer;
+import domain.Ball;
+import domain.GameConstants;
 import entity.MonsterEntity;
-import network.NetworkClient;
+import network.INetworkClient;
 import network.RemotePlayer;
+import rendering.IRenderer;
 import rendering.Renderer;
+import world.IMapGenerator;
+import static domain.GameConstants.*;
 
 import javax.swing.*;
+
 import java.awt.*;
 import java.awt.event.*;
 
 public class GamePanel extends JPanel implements ActionListener {
-
-    public static final int WIDTH     = 800;
-    public static final int HEIGHT    = 600;
-    public static final int TILE_SIZE = 64;
-    public static final int TEX_SIZE  = 64;
 
     private static final int FPS = 60;
 
@@ -23,36 +24,38 @@ public class GamePanel extends JPanel implements ActionListener {
     public  GameState        state;
     public  PlayerController player;
     public  InputHandler     input;
-    public  NetworkClient    networkClient = null;
+    public  INetworkClient    networkClient = null;
     public  RemotePlayer     remotePlayer  = null;
 
-    private final Renderer renderer;
+    private final IRenderer renderer;
     private final Timer    timer;
+    private final ISoundPlayer sound;
     private long   lastUpdateTime = System.currentTimeMillis();
     private Runnable returnToMenuAction;
 
     // ── Constructors ─────────────────────────────────────────────────────
 
-    public GamePanel() { this(null); }
+    public GamePanel(ISoundPlayer sound, IMapGenerator mapGen) { this(null, sound, mapGen); }
 
-    public GamePanel(NetworkClient client) {
-        setPreferredSize(new Dimension(WIDTH, HEIGHT));
+    public GamePanel(INetworkClient client, ISoundPlayer sound, IMapGenerator mapGen) {
+        setPreferredSize(new Dimension(GameConstants.WIDTH, GameConstants.HEIGHT));
         setBackground(Color.BLACK);
         setFocusable(true);
 
         networkClient = client;
         input = new InputHandler(this);
+        this.sound = sound;
 
         if (client == null) {
-            state = new GameState(0);
+            state = new GameState(0, mapGen, sound);
         } else {
-            state = new GameState(client, 0);   // multiplayer constructor
-            remotePlayer = new RemotePlayer("P" + (client.myPlayerId == 0 ? 2 : 1));
+            state = new GameState(client, 0, mapGen, sound);   // multiplayer constructor
+            remotePlayer = new RemotePlayer("P" + (client.getPlayerId() == 0 ? 2 : 1));
         }
 
         double startX = GameState.START_TILE_X * TILE_SIZE + TILE_SIZE / 2.0;
         double startY = GameState.START_TILE_Y * TILE_SIZE + TILE_SIZE / 2.0;
-        player = new PlayerController(state, startX, startY, Math.toRadians(45));
+        player = new PlayerController(state, startX, startY, Math.toRadians(45), sound);
 
         addKeyListener(new InputKeyAdapter());
         addFocusListener(new FocusAdapter() {
@@ -113,50 +116,55 @@ public class GamePanel extends JPanel implements ActionListener {
 
         for (MonsterEntity m : state.monsters) {
             if (m.collidesWithPlayer(player.playerX, player.playerY)) {
-                SoundPlayer.stopMonsterSound();
+                sound.stopMonsterSound();
                 triggerGameOver(false);
                 return;
             }
         }
 
-        state.collectBalls(player.playerX, player.playerY);
+        state.collectItems(player);
         if (state.checkExit(player.playerX, player.playerY)) {
-            SoundPlayer.playVictoryMusic();
+            sound.playVictoryMusic();
             triggerGameOver(true);
         }
     }
 
     private void updateMultiplayer(long dt) {
-        NetworkClient nc = networkClient;
-        state.remainingTimeMillis = nc.serverTimeMs;
+        INetworkClient nc = networkClient;
+        state.remainingTimeMillis = nc.getServerTimeMs();
 
         int[] dc;
-        while ((dc = nc.diamondsTaken.poll()) != null) {
+        while ((dc = nc.getDiamondsTaken().poll()) != null) {
             final int bx = dc[0], by = dc[1];
-            state.balls.removeIf(b -> (int) b.x == bx && (int) b.y == by);
-            SoundPlayer.playDing();
-            if (state.balls.isEmpty()) state.door.open();
+            state.items.removeIf(item -> (int) item.getX() == bx && (int) item.getY() == by);
+            sound.playDing();
+            
+            // FIXED BUG: Check the polymorphic generic items list specifically for Balls
+            boolean ballsRemaining = state.items.stream().anyMatch(item -> item instanceof Ball);
+            if (!ballsRemaining && !state.door.isOpen()) {
+                state.door.open();
+            }
         }
 
-        if (nc.serverDoorOpen && !state.door.isOpen()) state.door.open();
+        if (nc.isServerDoorOpen() && !state.door.isOpen()) state.door.open();
 
-        double[] mx = nc.monsterX, my = nc.monsterY;
-        boolean[] mch = nc.monsterChasing;
+        double[] mx = nc.getMonsterX(), my = nc.getMonsterY();
+        boolean[] mch = nc.getMonsterChasing();
         for (int i = 0; i < Math.min(state.monsters.size(), mx.length); i++) {
             state.monsters.get(i).setPosition(mx[i], my[i]);
             state.monsters.get(i).setChasing(mch[i]);
         }
 
         if (remotePlayer != null) {
-            remotePlayer.x     = nc.remotePlayerX;
-            remotePlayer.y     = nc.remotePlayerY;
-            remotePlayer.angle = nc.remotePlayerAngle;
+            remotePlayer.x     = nc.getRemotePlayerX();
+            remotePlayer.y     = nc.getRemotePlayerY();
+            remotePlayer.angle = nc.getRemotePlayerAngle();
         }
 
-        if (nc.gameOver && !state.levelComplete) {
-            if (nc.remotePlayerLeft) state.remotePlayerLeft = true;
-            SoundPlayer.stopMonsterSound();
-            triggerGameOver(nc.gameWon);
+        if (nc.isGameOver() && !state.levelComplete) {
+            if (nc.isRemotePlayerLeft()) state.remotePlayerLeft = true;
+            sound.stopMonsterSound();
+            triggerGameOver(nc.isGameWon());
             return;
         }
 
@@ -191,7 +199,7 @@ public class GamePanel extends JPanel implements ActionListener {
     }
 
     private void updateMonsterAudio() {
-        if (state.monsters.isEmpty()) { SoundPlayer.stopMonsterSound(); return; }
+        if (state.monsters.isEmpty()) { sound.stopMonsterSound(); return; }
         MonsterEntity closest = null;
         double minDist = Double.MAX_VALUE;
         for (MonsterEntity m : state.monsters) {
@@ -202,8 +210,8 @@ public class GamePanel extends JPanel implements ActionListener {
         double dy  = closest.getY() - player.playerY;
         double vol = 1.0 - Math.min(minDist / 640.0, 1.0);
         double pan = Math.sin(normalizeAngle(Math.atan2(dy, dx) - player.playerAngle));
-        if (vol <= 0.02 || state.levelComplete) SoundPlayer.stopMonsterSound();
-        else SoundPlayer.updateMonsterSound(pan, vol);
+        if (vol <= 0.02 || state.levelComplete) sound.stopMonsterSound();
+        else sound.updateMonsterSound(pan, vol);
     }
 
     private void restartGame() {
@@ -229,7 +237,7 @@ public class GamePanel extends JPanel implements ActionListener {
     void returnToMenu() {
         timer.stop();
         state.paused = false;
-        SoundPlayer.stopMonsterSound();
+        sound.stopMonsterSound();
         if (networkClient != null) networkClient.disconnect();
         if (returnToMenuAction != null) SwingUtilities.invokeLater(returnToMenuAction);
         else System.exit(0);
@@ -299,7 +307,7 @@ public class GamePanel extends JPanel implements ActionListener {
             case "Next Level"  -> nextLevel();
             case "Restart"     -> restartGame();
             case "Play Again"  -> { state.loadLevel(0); player.reset(GameState.START_TILE_X * TILE_SIZE + TILE_SIZE / 2.0, GameState.START_TILE_Y * TILE_SIZE + TILE_SIZE / 2.0, Math.toRadians(45)); timer.start(); input.enableMouseCapture(); }
-            case "Quit"        -> System.exit(0);
+            case "Quit"        -> returnToMenu(); // FIXED BUG: Disconnect safely instead of crashing
         }
     }
 

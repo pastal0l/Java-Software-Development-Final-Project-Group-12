@@ -5,7 +5,8 @@ import domain.Door;
 import domain.LevelConfig;
 import entity.MonsterEntity;
 import world.MazeGenerator;
-import UI.GamePanel;
+import static domain.GameConstants.TILE_SIZE;
+
 
 import java.util.ArrayList;
 import java.util.List;
@@ -44,7 +45,7 @@ public class GameLogic {
         int startX = 1, startY = 1;
         int exitX = ms - 1, exitY = ms - 1;
 
-        map = MazeGenerator.generateMaze(ms, startX, startY, exitX - 1, exitY);
+        map = new MazeGenerator().generateMaze(ms, startX, startY, exitX - 1, exitY);
         map[startY][startX] = 0; map[startY][startX + 1] = 0;
         map[startY + 1][startX] = 0; map[exitY][exitX - 1] = 0;
 
@@ -56,7 +57,7 @@ public class GameLogic {
         for (int i = 0; i < config.monsterCount; i++) {
             int[] pos = findEmptySpawn(taken);
             taken.add(pos);
-            monsters.add(new MonsterEntity(pos[0], pos[1], GamePanel.TILE_SIZE));
+            monsters.add(new MonsterEntity(pos[0], pos[1], TILE_SIZE));
         }
 
         balls.clear();
@@ -66,21 +67,21 @@ public class GameLogic {
             if (map[ty][tx] != 0) continue;
             if ((tx == startX && ty == startY) || (tx == exitX && ty == exitY)) continue;
             boolean dup = balls.stream().anyMatch(b ->
-                (int)(b.getX() / GamePanel.TILE_SIZE) == tx &&
-                (int)(b.getY() / GamePanel.TILE_SIZE) == ty);
+                (int)(b.getX() / TILE_SIZE) == tx &&
+                (int)(b.getY() / TILE_SIZE) == ty);
             if (dup) continue;
             balls.add(new Ball(
-                tx * GamePanel.TILE_SIZE + GamePanel.TILE_SIZE / 2.0,
-                ty * GamePanel.TILE_SIZE + GamePanel.TILE_SIZE / 2.0));
+                tx * TILE_SIZE + TILE_SIZE / 2.0,
+                ty * TILE_SIZE + TILE_SIZE / 2.0));
         }
 
         remainingTimeMillis = config.timeLimitMillis;
 
-        double px = startX * GamePanel.TILE_SIZE + GamePanel.TILE_SIZE / 2.0;
-        double py = startY * GamePanel.TILE_SIZE + GamePanel.TILE_SIZE / 2.0;
+        double px = startX * TILE_SIZE + TILE_SIZE / 2.0;
+        double py = startY * TILE_SIZE + TILE_SIZE / 2.0;
         playerPos[0][0] = px;                          playerPos[0][1] = py;
         playerPos[0][2] = Math.toRadians(45);
-        playerPos[1][0] = px + GamePanel.TILE_SIZE;    playerPos[1][1] = py;
+        playerPos[1][0] = px + TILE_SIZE;    playerPos[1][1] = py;
         playerPos[1][2] = Math.toRadians(45);
     }
 
@@ -100,7 +101,7 @@ public class GameLogic {
             double d1 = Math.hypot(playerPos[1][0] - m.getX(), playerPos[1][1] - m.getY());
             double nearX = d0 < d1 ? playerPos[0][0] : playerPos[1][0];
             double nearY = d0 < d1 ? playerPos[0][1] : playerPos[1][1];
-            m.update(nearX, nearY, map, GamePanel.TILE_SIZE);
+            m.update(nearX, nearY, map, TILE_SIZE);
 
             for (int p = 0; p < 2; p++) {
                 if (m.collidesWithPlayer(playerPos[p][0], playerPos[p][1])) {
@@ -132,8 +133,8 @@ public class GameLogic {
         // Exit check
         if (doorOpen) {
             for (int p = 0; p < 2; p++) {
-                int tx = (int) playerPos[p][0] / GamePanel.TILE_SIZE;
-                int ty = (int) playerPos[p][1] / GamePanel.TILE_SIZE;
+                int tx = (int) playerPos[p][0] / TILE_SIZE;
+                int ty = (int) playerPos[p][1] / TILE_SIZE;
                 if (tx == config.mapSize - 2 && ty == config.mapSize - 1) {
                     onGameEnd.accept(true);
                     return;

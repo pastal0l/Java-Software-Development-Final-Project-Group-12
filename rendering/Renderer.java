@@ -8,9 +8,11 @@ import java.awt.image.DataBufferInt;
 
 import UI.GamePanel;
 import UI.GameState;
+import domain.GameConstants;
 import UI.PlayerController;
 import domain.Ball;
 import domain.Door;
+import domain.Item;
 import domain.RayHit;
 import entity.MonsterEntity;
 import network.RemotePlayer;
@@ -21,10 +23,10 @@ import network.RemotePlayer;
  *
  * It holds a reference to {@link GamePanel} and reads state each frame.
  */
-public class Renderer {
+public class Renderer implements IRenderer {
     private final TextureRegistry textureRegistry;
-    private static final int TILE_SIZE  = GamePanel.TILE_SIZE;
-    private static final int TEX_SIZE   = GamePanel.TEX_SIZE;
+    private static final int TILE_SIZE  = GameConstants.TILE_SIZE;
+    private static final int TEX_SIZE   = GameConstants.TEX_SIZE;
     /** Minimap display size in pixels; tile pixel-size adapts per level. */
     private static final int MINIMAP_PX = 200;
 
@@ -42,6 +44,7 @@ public class Renderer {
     // Public entry-point
     // -----------------------------------------------------------------------
 
+    @Override
     public void render(Graphics g) {
         drawScene(g);
         drawMinimap(g);
@@ -232,9 +235,11 @@ public class Renderer {
         double fov             = Math.toRadians(60);
         double projectionPlane = (width / 2.0) / Math.tan(fov / 2.0);
 
-        for (Ball ball : game.state.balls) {
-            double dx = ball.x - game.player.playerX;
-            double dy = ball.y - game.player.playerY;
+        for (Item item : game.state.items) {
+            if (!(item instanceof Ball)) continue;
+            Ball ball = (Ball) item;
+            double dx = ball.getX() - game.player.playerX;
+            double dy = ball.getY() - game.player.playerY;
             double distance = Math.sqrt(dx * dx + dy * dy);
             if (distance < 0.1) continue;
 
@@ -307,13 +312,23 @@ public class Renderer {
     }
 
     private void drawStatus(Graphics g) {
-        int collected = game.state.config.objectiveCount - game.state.balls.size();
+        // FIXED: Count only objective items (Diamonds/Balls) to prevent HUD bugs
+        int remainingDiamonds = 0;
+        for (Item item : game.state.items) {
+            if (item instanceof Ball) {
+                remainingDiamonds++;
+            }
+        }
+
+        int collected = game.state.config.objectiveCount - remainingDiamonds;
         g.setColor(new Color(0, 0, 0, 200));
         g.fillRect(10, 10, 250, 90);
         g.setColor(Color.WHITE);
         g.setFont(g.getFont().deriveFont(16f));
         g.drawString("Diamonds: " + collected + " / " + game.state.config.objectiveCount, 18, 32);
-        g.drawString(game.state.balls.isEmpty() ? "Now go to the exit." : "Collect all diamonds.", 18, 52);
+        
+        // FIXED: Display exit message only when Diamonds reach 0
+        g.drawString(remainingDiamonds == 0 ? "Now go to the exit." : "Collect all diamonds.", 18, 52);
         drawStaminaBar(g, 18, 62, 230, 14);
     }
 
@@ -391,13 +406,12 @@ public class Renderer {
         g.setColor(Color.BLUE);
         g.fillOval(offsetX + GameState.START_TILE_X * tilePx + 2, offsetY + GameState.START_TILE_Y * tilePx + 2, 6, 6);
 
-        for (Ball ball : game.state.balls) {
-            int bx = offsetX + (int) (ball.x / TILE_SIZE * tilePx);
-            int by = offsetY + (int) (ball.y / TILE_SIZE * tilePx);
-            g.setColor(Color.MAGENTA);
-            g.fillOval(bx - 4, by - 4, 8, 8);
-            g.setColor(Color.YELLOW);
-            g.fillOval(bx - 3, by - 3, 6, 6);
+        // FIXED: Implemented polymorphism! No more instanceof checks for minimap item rendering
+        for (Item item : game.state.items) {
+            int itemPx = offsetX + (int) (item.getX() / TILE_SIZE * tilePx);
+            int itemPy = offsetY + (int) (item.getY() / TILE_SIZE * tilePx);
+            
+            item.drawOnMinimap(g, itemPx, itemPy);
         }
 
         for (MonsterEntity m : game.state.monsters) {

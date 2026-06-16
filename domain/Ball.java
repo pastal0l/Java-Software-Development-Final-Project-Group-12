@@ -1,8 +1,10 @@
 package domain;
 
-import entity.Entity;
+import java.awt.Color;
+import java.awt.Graphics;
 
-public class Ball extends Entity {
+
+public class Ball extends Item {
 
     public Ball(double startX, double startY) {
         // Pass the starting coordinates up to the Entity class
@@ -10,7 +12,16 @@ public class Ball extends Entity {
     }
 
     @Override
-    public void update(double playerX, double playerY, int[][] map, int tileSize) {
-        // Balls are static items, so they don't do anything on update!
+    public boolean onCollect(IPlayer player) {
+        // Diamonds are always picked up immediately when touched.
+        return true; 
+    }
+
+    @Override
+    public void drawOnMinimap(Graphics g, int screenX, int screenY) {
+        g.setColor(Color.MAGENTA);
+        g.fillOval(screenX - 4, screenY - 4, 8, 8);
+        g.setColor(Color.YELLOW);
+        g.fillOval(screenX - 3, screenY - 3, 6, 6);
     }
 }

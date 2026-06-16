@@ -10,11 +10,12 @@ import java.util.Random;
  * MazeGenerator creates a connected maze map that guarantees a path from the
  * start position to the door exit adjacency.
  */
-public class MazeGenerator {
+public class MazeGenerator implements IMapGenerator {
     private static final int WALL = 3;
     private static final int EMPTY = 0;
 
-    public static int[][] generateMaze(int mapSize, int startX, int startY, int exitAdjX, int exitAdjY) {
+    @Override
+    public int[][] generateMaze(int mapSize, int startX, int startY, int exitAdjX, int exitAdjY) {
         int[][] map = new int[mapSize][mapSize];
         for (int y = 0; y < mapSize; y++) {
             for (int x = 0; x < mapSize; x++) {

@@ -1,8 +1,13 @@
 package UI;
 import javax.swing.*;
 
+import audio.ISoundPlayer;
+import audio.SoundPlayer;
 import network.GameServer;
+import network.INetworkClient;
 import network.NetworkClient;
+import world.IMapGenerator;
+import world.MazeGenerator;
 
 import java.awt.*;
 
@@ -112,7 +117,9 @@ public class LobbyPanel extends JPanel {
     // -----------------------------------------------------------------------
 
     private void startSinglePlayer() {
-        GamePanel panel = new GamePanel();
+        ISoundPlayer  sound  = new SoundPlayer();
+        IMapGenerator mapGen = new MazeGenerator();
+        GamePanel     panel  = new GamePanel(sound, mapGen);
         switchToGame(panel);
     }
 
@@ -136,14 +143,16 @@ public class LobbyPanel extends JPanel {
 
         new Thread(() -> {
             try {
-                NetworkClient client = new NetworkClient();
+                INetworkClient client = new NetworkClient();
                 client.connect(ip, GameServer.PORT,
                     () -> SwingUtilities.invokeLater(() ->
                         setStatus("Connected — waiting for second player…")));
 
                 // Got START — build the game on the EDT
                 SwingUtilities.invokeLater(() -> {
-                    GamePanel panel = new GamePanel(client);
+                    ISoundPlayer sound = new SoundPlayer();
+                    IMapGenerator mapGen = new MazeGenerator();
+                    GamePanel panel = new GamePanel(client, sound, mapGen);
                     switchToGame(panel);
                 });
             } catch (Exception ex) {
