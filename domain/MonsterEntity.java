@@ -118,31 +118,6 @@ public class MonsterEntity extends Entity {
         return inFrontFOV(playerX, playerY, 0.0); // ±90° for sprite orientation
     }
 
-    // ── private movement helpers (unchanged logic) ────────────────────────
-
-    private void followAStarPath(double targetX, double targetY,
-                                  int[][] map, int tileSize, double speed) {
-        int cgx = (int) (x / tileSize), cgy = (int) (y / tileSize);
-        int tgx = (int) (targetX / tileSize), tgy = (int) (targetY / tileSize);
-        long now = System.currentTimeMillis();
-        double cx = cgx * tileSize + tileSize / 2.0;
-        double cy = cgy * tileSize + tileSize / 2.0;
-        boolean nearCenter = Math.abs(x - cx) < 4.0 && Math.abs(y - cy) < 4.0;
-
-        if (currentPath.isEmpty() || (nearCenter && now - lastPathCalculationTime > 500)) {
-            currentPath = Pathfinder.findPath(map, cgx, cgy, tgx, tgy);
-            lastPathCalculationTime = now;
-        }
-        if (!currentPath.isEmpty()) {
-            Pathfinder.Node next = currentPath.get(0);
-            double destX = next.gridX * tileSize + tileSize / 2.0;
-            double destY = next.gridY * tileSize + tileSize / 2.0;
-            moveToTarget(destX, destY, speed, map, tileSize);
-            if (Math.abs(x - destX) < 5.0 && Math.abs(y - destY) < 5.0)
-                currentPath.remove(0);
-        }
-    }
-
     private void wander(int[][] map, int tileSize) {
         if (currentPath.isEmpty()) {
             int cgx = (int) (x / tileSize), cgy = (int) (y / tileSize);
