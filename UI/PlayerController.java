@@ -62,9 +62,11 @@ public class PlayerController implements IPlayer {
         if (input.turnLeft)  playerAngle -= ROTATE_SPEED;
         if (input.turnRight) playerAngle += ROTATE_SPEED;
 
-        // Stamina
+        // Stamina — only drain when actually moving
+        boolean isMoving = input.moveForward || input.moveBackward
+                        || input.strafeLeft  || input.strafeRight;
         double dt = deltaTime / 1000.0;
-        if (input.shiftHeld && !exhausted && stamina > 0) {
+        if (input.shiftHeld && isMoving && !exhausted && stamina > 0) {
             sprinting = true;
             stamina  -= STAMINA_DRAIN * dt;
             if (stamina <= 0) { stamina = 0; exhausted = true; sprinting = false; }

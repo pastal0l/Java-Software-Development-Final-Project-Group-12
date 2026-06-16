@@ -71,22 +71,50 @@ public class Renderer implements IRenderer {
             screenPixels = ((DataBufferInt) screenBuffer.getRaster().getDataBuffer()).getData();
         }
 
-        int horizon    = height / 2;
-        int skyColor   = (18 << 16) | (24 << 8) | 60;
-        int floorColor = (16 << 16) | (20 << 8) | 32;
+        int horizon = height / 2;
 
-        int row = 0;
+        // ── Sky: flat dark-navy + hash-based stars that drift with playerAngle ──
+        int skyColor   = (18 << 16) | (24 << 8) | 60;
+        int starShift  = (int) (game.player.playerAngle * 300.0);
         for (int y = 0; y < horizon; y++) {
-            int off = row++ * width;
-            for (int x = 0; x < width; x++) screenPixels[off + x] = skyColor;
+            int off = y * width;
+            for (int x = 0; x < width; x++) {
+                int color = skyColor;
+                int hash = (x + starShift) * 374761393 + y * 668265263;
+                hash = (hash ^ (hash >> 13)) * 1274126177;
+                hash ^= (hash >>> 16);
+                int twinkle = hash & 0x3FF;
+                if (y < horizon - horizon / 8) {
+                    if      (twinkle == 0) color = 0xFFFFFF;   // bright star
+                    else if (twinkle <  4) color = 0x9AA0C8;   // dim star
+                }
+                screenPixels[off + x] = color;
+            }
         }
+
+        // Crescent moon that tracks playerAngle across the sky
+        drawMoon(screenPixels, width, height, horizon, skyColor);
+
+        // ── Floor: grassy green + depth shading + speckled grass blades ──
+        int floorColor = (46 << 16) | (94 << 8) | 42;
         for (int y = horizon; y < height; y++) {
-            int off = row++ * width;
-            for (int x = 0; x < width; x++) screenPixels[off + x] = floorColor;
+            double t = (height == horizon) ? 1.0 : (y - horizon) / (double) (height - horizon);
+            int baseColor = shadeColor(floorColor, 0.45 + 0.55 * t);
+            int off = y * width;
+            for (int x = 0; x < width; x++) {
+                int hash = x * 374761393 + y * 668265263;
+                hash = (hash ^ (hash >> 13)) * 1274126177;
+                hash ^= (hash >>> 16);
+                int speck = hash & 0xFF;
+                int color = baseColor;
+                if      (speck <  10)  color = shadeColor(baseColor, 1.30); // light blade
+                else if (speck > 246)  color = shadeColor(baseColor, 0.65); // dark soil
+                screenPixels[off + x] = color;
+            }
         }
 
         double fov        = Math.toRadians(60);
-        int    rayCount   = width / 2;
+        int    rayCount   = width;
         double rayStep    = fov / rayCount;
         double startAngle = game.player.playerAngle - fov / 2;
         double[] rayDistances = new double[rayCount];
@@ -101,23 +129,19 @@ public class Renderer implements IRenderer {
             int lineOffset = horizon - lineHeight / 2;
             int drawStart  = Math.max(0, lineOffset);
             int drawEnd    = Math.min(height - 1, lineOffset + lineHeight);
-            int screenX    = ray * 2;
-            if (screenX < 0) continue;
+            int px = ray;
+            if (px < 0 || px >= width) continue;
 
-            for (int xOff = 0; xOff < 2; xOff++) {
-                int px = screenX + xOff;
-                if (px < 0 || px >= width) continue;
-                for (int y = drawStart; y <= drawEnd; y++) {
-                    int texY  = Math.max(0, Math.min(TEX_SIZE - 1,
-                            (int) (((y - lineOffset) * TEX_SIZE) / (double) lineHeight)));
-                    int color = hit.texture[hit.textureX][texY];
-                    if (!(hit.wallType == Door.DOOR_TILE && game.state.isExitOpen())) {
-                        if (hit.side == 1) color = shadeColor(color, 0.70);
-                        color = shadeColor(color,
-                                Math.max(0.20, 1.0 / (1.0 + correctedDist * correctedDist * 0.00005)));
-                    }
-                    screenPixels[y * width + px] = color;
+            for (int y = drawStart; y <= drawEnd; y++) {
+                int texY  = Math.max(0, Math.min(TEX_SIZE - 1,
+                        (int) (((y - lineOffset) * TEX_SIZE) / (double) lineHeight)));
+                int color = hit.texture[hit.textureX][texY];
+                if (!(hit.wallType == Door.DOOR_TILE && game.state.isExitOpen())) {
+                    if (hit.side == 1) color = shadeColor(color, 0.70);
+                    color = shadeColor(color,
+                            Math.max(0.20, 1.0 / (1.0 + correctedDist * correctedDist * 0.00005)));
                 }
+                screenPixels[y * width + px] = color;
             }
         }
 
@@ -127,6 +151,48 @@ public class Renderer implements IRenderer {
         g.drawImage(screenBuffer, 0, 0, null);
         drawAllMonsterSprites(g, width, height);
         drawRemotePlayerSprite(g, width, height);
+    }
+
+    /**
+     * Crescent moon at a fixed world direction; slides across the sky as the
+     * player turns so it feels like a real distant object.
+     */
+    private void drawMoon(int[] pixels, int width, int height, int horizon, int skyColor) {
+        double moonWorldAngle = Math.toRadians(120);
+        double skySpan        = Math.toRadians(180);
+        double relAngle       = normalizeAngle(moonWorldAngle - game.player.playerAngle);
+        if (Math.abs(relAngle) > skySpan / 2) return;
+
+        int moonRadius = Math.max(14, height / 16);
+        int glowRadius = (int) (moonRadius * 1.8);
+        int moonX = (int) (width / 2.0 + (relAngle / (skySpan / 2.0)) * (width / 2.0 + glowRadius));
+        int moonY = horizon / 3;
+
+        int moonColor = 0xF4F1D8;
+        int glowColor = 0x9FA6C0;
+
+        double crescentX = moonX + moonRadius * 0.45;
+        double crescentY = moonY - moonRadius * 0.25;
+        double crescentR = moonRadius * 0.85;
+
+        int xMin = Math.max(0,         moonX - glowRadius);
+        int xMax = Math.min(width - 1, moonX + glowRadius);
+        int yMin = Math.max(0,          moonY - glowRadius);
+        int yMax = Math.min(horizon - 1, moonY + glowRadius);
+
+        for (int y = yMin; y <= yMax; y++) {
+            int rowOff = y * width;
+            for (int x = xMin; x <= xMax; x++) {
+                double dist = Math.hypot(x - moonX, y - moonY);
+                if (dist <= moonRadius) {
+                    double craterDist = Math.hypot(x - crescentX, y - crescentY);
+                    pixels[rowOff + x] = (craterDist <= crescentR) ? skyColor : moonColor;
+                } else if (dist <= glowRadius) {
+                    double f = 1.0 - (dist - moonRadius) / (glowRadius - moonRadius);
+                    pixels[rowOff + x] = lerpColor(skyColor, glowColor, f * 0.5);
+                }
+            }
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -157,19 +223,31 @@ public class Renderer implements IRenderer {
         double spritePerpDist = distance * Math.cos(relativeAngle);
         if (castRayDistance(game.player.playerAngle + relativeAngle) + 1.0 < spritePerpDist) return;
 
-        int screenX    = (int) (((relativeAngle / (fov / 2)) * 0.5 + 0.5) * width);
-        int spriteSize = Math.max(12, Math.min((int) ((TILE_SIZE * height) / distance * 0.4), 80));
-        int spriteY    = height / 2 - spriteSize / 2;
-        MonsterRenderer renderer = new MonsterRenderer(m);
+        int screenX  = (int) (((relativeAngle / (fov / 2)) * 0.5 + 0.5) * width);
+        int baseSize = Math.max(20, Math.min((int) ((TILE_SIZE * height) / distance * 0.7), 150));
 
-        BufferedImage sprite = renderer.getSprite();
+        // Ground-align: feet stick to the projected floor line
+        int horizonY   = height / 2;
+        int floorLineH = Math.max(1, Math.min((int) ((TILE_SIZE * height) / Math.max(1.0, spritePerpDist)), height));
+        int groundY    = horizonY + floorLineH / 2;
+
+        // Squish/breathing animation
+        double squishPhase = game.state.floatPhase * 1.5 + (m.getX() + m.getY()) * 0.01;
+        double squish      = Math.sin(squishPhase) * 0.12;
+        int spriteW = (int) Math.round(baseSize * (1.0 + squish));
+        int spriteH = (int) Math.round(baseSize * (1.0 - squish));
+        int spriteX = screenX - spriteW / 2;
+        int spriteY = groundY  - spriteH;
+
+        MonsterRenderer renderer = new MonsterRenderer(m);
+        BufferedImage sprite = renderer.getSprite(game.player.playerX, game.player.playerY);
         if (sprite != null) {
-            g.drawImage(sprite, screenX - spriteSize / 2, spriteY, spriteSize, spriteSize, null);
+            g.drawImage(sprite, spriteX, spriteY, spriteW, spriteH, null);
         } else {
             g.setColor(new Color(230, 40, 40, 220));
-            g.fillOval(screenX - spriteSize / 2, spriteY, spriteSize, spriteSize);
+            g.fillOval(spriteX, spriteY, spriteW, spriteH);
             g.setColor(Color.BLACK);
-            g.drawOval(screenX - spriteSize / 2, spriteY, spriteSize, spriteSize);
+            g.drawOval(spriteX, spriteY, spriteW, spriteH);
         }
     }
 
@@ -265,7 +343,7 @@ public class Renderer implements IRenderer {
 
             for (int sx = spriteLeft; sx < spriteRight; sx++) {
                 if (sx < 0 || sx >= width) continue;
-                int rayIndex = sx / 2;
+                int rayIndex = sx;
                 if (rayIndex < 0 || rayIndex >= rayCount) continue;
                 if (distance * Math.cos(angleDiff) >= rayDistances[rayIndex] - 1) continue;
                 for (int sy = spriteTop; sy < spriteBottom; sy++) {
@@ -459,9 +537,12 @@ public class Renderer implements IRenderer {
         g.setColor(new Color(0, 0, 0, 160));
         g.fillRect(0, 0, width, height);
 
-        int numOpts   = game.state.pauseMenuOptions.length;
-        int boxWidth  = 360;
-        int boxHeight = 56 + numOpts * 42 + 36;
+        int numOpts       = game.state.pauseMenuOptions.length;
+        int boxWidth      = 460;
+        int titleAreaH    = 130;
+        int optionSpacing = 58;
+        int bottomPadding = 50;
+        int boxHeight = titleAreaH + numOpts * optionSpacing + bottomPadding;
         int boxX = width  / 2 - boxWidth  / 2;
         int boxY = height / 2 - boxHeight / 2;
 
@@ -470,19 +551,19 @@ public class Renderer implements IRenderer {
         g.setColor(new Color(70, 110, 210));
         g.drawRoundRect(boxX, boxY, boxWidth, boxHeight, 18, 18);
 
-        String title = game.networkClient != null ? "PAUSED" : "PAUSED";
-        g.setFont(g.getFont().deriveFont(Font.BOLD, 30f));
+        String title = "PAUSED";
+        g.setFont(g.getFont().deriveFont(Font.BOLD, 40f));
         g.setColor(Color.WHITE);
         int tw = g.getFontMetrics().stringWidth(title);
-        g.drawString(title, width / 2 - tw / 2, boxY + 44);
+        g.drawString(title, width / 2 - tw / 2, boxY + 60);
 
-        g.setFont(g.getFont().deriveFont(22f));
+        g.setFont(g.getFont().deriveFont(26f));
         for (int i = 0; i < numOpts; i++) {
             String opt = game.state.pauseMenuOptions[i];
-            int oy = boxY + 68 + i * 42;
+            int oy = boxY + titleAreaH + i * optionSpacing;
             if (i == game.state.pauseMenuSelected) {
                 g.setColor(new Color(50, 100, 220));
-                g.fillRoundRect(width / 2 - 130, oy - 27, 260, 34, 10, 10);
+                g.fillRoundRect(width / 2 - 160, oy - 32, 320, 44, 12, 12);
                 g.setColor(Color.WHITE);
             } else {
                 g.setColor(new Color(170, 200, 240));
@@ -666,6 +747,14 @@ public class Renderer implements IRenderer {
         int g = (int) Math.max(0, Math.min(255, ((rgb >>  8) & 0xFF) * factor));
         int b = (int) Math.max(0, Math.min(255, ( rgb        & 0xFF) * factor));
         return (r << 16) | (g << 8) | b;
+    }
+
+    private int lerpColor(int c0, int c1, double t) {
+        int r0 = (c0 >> 16) & 0xFF, g0 = (c0 >>  8) & 0xFF, b0 = c0 & 0xFF;
+        int r1 = (c1 >> 16) & 0xFF, g1 = (c1 >>  8) & 0xFF, b1 = c1 & 0xFF;
+        return ((int)(r0 + (r1 - r0) * t) << 16)
+             | ((int)(g0 + (g1 - g0) * t) <<  8)
+             |  (int)(b0 + (b1 - b0) * t);
     }
 
     private double normalizeAngle(double angle) {

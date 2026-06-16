@@ -52,7 +52,7 @@ public class MonsterEntity extends Entity {
             chasing = true;
             currentPath.clear();
             moveToTarget(playerX, playerY, CHASE_SPEED, map, tileSize);
-        } else if (pursuitActive && distance <= MAX_CHASE_DISTANCE) {
+        } else if (pursuitActive && visible && distance <= MAX_CHASE_DISTANCE) {
             chasing = true;
             followAStarPath(playerX, playerY, map, tileSize, CHASE_SPEED);
         } else {
@@ -90,6 +90,17 @@ public class MonsterEntity extends Entity {
     
     /** Used by client-side rendering to reflect server state. */
     public void setChasing(boolean chasing)      { this.chasing = chasing; }
+
+    /** Returns true if the monster is roughly facing toward the player (dot product > 0). */
+    public boolean isFacingPlayer(double playerX, double playerY) {
+        if (directionX == 0 && directionY == 0) return true;
+        double dx = playerX - x;
+        double dy = playerY - y;
+        double dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 1e-3) return true;
+        double dot = (dx / dist) * directionX + (dy / dist) * directionY;
+        return dot > 0.0;
+    }
 
     // ── private movement helpers (unchanged logic) ────────────────────────
 

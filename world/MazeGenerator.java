@@ -11,7 +11,7 @@ import java.util.Random;
  * start position to the door exit adjacency.
  */
 public class MazeGenerator implements IMapGenerator {
-    private static final int WALL = 3;
+    private static final int WALL = 1;
     private static final int EMPTY = 0;
 
     @Override

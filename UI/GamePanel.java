@@ -248,6 +248,7 @@ public class GamePanel extends JPanel implements ActionListener {
         state.pauseMenuSelected = 0;
         if (state.paused) {
             input.disableMouseCapture();
+            sound.stopMonsterSound();
             if (networkClient == null) timer.stop();
         } else {
             lastUpdateTime = System.currentTimeMillis();

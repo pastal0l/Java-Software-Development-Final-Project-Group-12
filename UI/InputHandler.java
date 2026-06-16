@@ -12,8 +12,9 @@ public class InputHandler {
     public boolean turnLeft, turnRight;
     public boolean shiftHeld = false;
 
-    private double  mouseDeltaX = 0;
-    private boolean recentering = false;
+    private double  mouseDeltaX        = 0;
+    private boolean recentering        = false;
+    private boolean mouseCaptureActive = false;
     private Robot   robot;
     private Cursor  blankCursor;
     private final JPanel panel;
@@ -39,11 +40,13 @@ public class InputHandler {
 
     public void enableMouseCapture() {
         if (!panel.isShowing()) return;
+        mouseCaptureActive = true;
         panel.setCursor(blankCursor);
         recenterMouse();
     }
 
     public void disableMouseCapture() {
+        mouseCaptureActive = false;
         panel.setCursor(Cursor.getDefaultCursor());
     }
 
@@ -67,6 +70,7 @@ public class InputHandler {
     }
 
     private void onMouseMoved(int mouseX, int mouseY) {
+        if (!mouseCaptureActive) return;
         if (recentering) { recentering = false; return; }
         int dx = mouseX - panel.getWidth() / 2;
         mouseDeltaX += dx;
