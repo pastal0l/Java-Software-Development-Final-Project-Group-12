@@ -42,6 +42,7 @@ public class NetworkClient implements INetworkClient {
     private volatile boolean gameOver          = false;
     private volatile boolean gameWon           = false;
     private volatile boolean remotePlayerLeft  = false;
+    private volatile boolean nextLevelReady    = false;
 
     /** Per-monster positions and chase flag (length = monsterCount). */
     private volatile double[]  monsterX       = new double[0];
@@ -120,6 +121,18 @@ public class NetworkClient implements INetworkClient {
 
     @Override
     public boolean isRemotePlayerLeft() { return remotePlayerLeft; }
+
+    @Override
+    public boolean isNextLevelReady() { return nextLevelReady; }
+
+    @Override
+    public void clearNextLevel() {
+        nextLevelReady = false;
+        serverDoorOpen = false;
+        gameOver       = false;
+        gameWon        = false;
+        diamondsTaken.clear();
+    }
 
     @Override
     public double getRemotePlayerX() { return remotePlayerX; }
@@ -232,6 +245,38 @@ public class NetworkClient implements INetworkClient {
         } else if (line.startsWith("GAME_OVER:")) {
             gameWon  = line.endsWith(":1");
             gameOver = true;
+
+        // ── Next-level handshake ──────────────────────────────────────────
+        } else if (line.equals("NEXT_LEVEL")) {
+            // Reset per-level flags; wait for new map data + START_NEXT
+            serverDoorOpen = false;
+            nextLevelReady = false;
+        } else if (line.startsWith("MAP_SIZE:")) {
+            mapSize = Integer.parseInt(line.substring(9).trim());
+        } else if (line.startsWith("LEVEL:")) {
+            levelIdx = Integer.parseInt(line.substring(6).trim());
+        } else if (line.startsWith("MAP_DATA:")) {
+            String[] parts = line.substring(9).split(",");
+            int[][] m = new int[mapSize][mapSize];
+            for (int i = 0; i < parts.length; i++)
+                m[i / mapSize][i % mapSize] = Integer.parseInt(parts[i].trim());
+            serverMap = m;
+        } else if (line.startsWith("BALLS:")) {
+            List<double[]> list = new ArrayList<>();
+            String payload = line.substring(6).trim();
+            if (!payload.isEmpty()) {
+                for (String token : payload.split(";")) {
+                    String[] xy = token.split(":");
+                    list.add(new double[]{
+                        Double.parseDouble(xy[0]),
+                        Double.parseDouble(xy[1])
+                    });
+                }
+            }
+            serverBalls = list;
+        } else if (line.equals("START_NEXT")) {
+            // All new-level data has arrived — signal GamePanel to reload
+            nextLevelReady = true;
         }
     }
 

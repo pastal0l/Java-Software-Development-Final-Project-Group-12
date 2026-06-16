@@ -24,5 +24,11 @@ public interface INetworkClient {
     void sendPosition(double x, double y, double angle);
     void disconnect();
     int getMapSize();
-    void connect(String host, int port, Runnable onWaiting) throws IOException ;
+    void connect(String host, int port, Runnable onWaiting) throws IOException;
+
+    /** True once the server has sent NEXT_LEVEL + full map data + START_NEXT. */
+    boolean isNextLevelReady();
+
+    /** Called by GamePanel after it has consumed the next-level data; resets the flag. */
+    void clearNextLevel();
 }

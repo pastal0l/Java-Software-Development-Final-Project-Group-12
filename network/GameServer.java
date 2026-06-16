@@ -2,6 +2,7 @@ package network;
 
 import java.io.*;
 import java.net.*;
+import domain.LevelConfig;
 
 public class GameServer implements Runnable {
 
@@ -11,7 +12,8 @@ public class GameServer implements Runnable {
     private final PrintWriter[] writers = new PrintWriter[2];
 
     private GameLogic logic;
-    private boolean   gameActive = false;
+    private boolean   gameActive   = false;
+    private int       currentLevel = 0;
 
     @Override public void run() {
         try { serve(); } catch (Exception e) {
@@ -35,13 +37,16 @@ public class GameServer implements Runnable {
         writers[1].println("PLAYER_ID:1");
         ss.close();
 
-        // Wire GameLogic callbacks to network broadcast
+        // Use a flag array so the lambda can signal outcomes without touching
+        // socket I/O directly from inside logic.update() (avoids reentrancy).
+        boolean[] outcome = {false, false}; // [0]=won  [1]=lost
         logic = new GameLogic(this::broadcast, won -> {
-            broadcast("GAME_OVER:" + (won ? 1 : 0));
-            gameActive = false;
+            if (won) outcome[0] = true;
+            else     outcome[1] = true;
         });
 
-        logic.loadLevel(0, playerPos);
+        currentLevel = 0;
+        logic.loadLevel(currentLevel, playerPos);
         pushLevelData();
         broadcast("START");
         gameActive = true;
@@ -55,7 +60,29 @@ public class GameServer implements Runnable {
             long dt  = now - lastTick;
             lastTick = now;
             if (dt > 0) synchronized (this) { logic.update(dt, playerPos); }
-            sendState();
+
+            // Handle end-of-level outcomes outside update() to avoid reentrancy
+            if (outcome[0]) {
+                outcome[0] = false;
+                if (currentLevel + 1 < LevelConfig.ALL.length) {
+                    // Advance to the next level
+                    currentLevel++;
+                    synchronized (this) { logic.loadLevel(currentLevel, playerPos); }
+                    broadcast("NEXT_LEVEL");
+                    pushLevelData();
+                    broadcast("START_NEXT");
+                } else {
+                    // All levels complete — total victory
+                    broadcast("GAME_OVER:1");
+                    gameActive = false;
+                }
+            } else if (outcome[1]) {
+                outcome[1] = false;
+                broadcast("GAME_OVER:0");
+                gameActive = false;
+            }
+
+            if (gameActive) sendState();
             Thread.sleep(50);
         }
     }
@@ -63,7 +90,7 @@ public class GameServer implements Runnable {
     private void pushLevelData() {
         int ms = logic.getConfig().mapSize;
         broadcast("MAP_SIZE:" + ms);
-        broadcast("LEVEL:0");
+        broadcast("LEVEL:" + currentLevel);
 
         int[][] map = logic.getMap();
         StringBuilder sb = new StringBuilder("MAP_DATA:");

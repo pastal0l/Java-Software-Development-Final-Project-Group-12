@@ -113,6 +113,38 @@ public class GameState {
 
     public int getCurrentLevelIndex() { return currentLevelIndex; }
 
+    /**
+     * Resets the game state from fresh server data after a multiplayer level
+     * transition (NEXT_LEVEL handshake).  Mirrors the multiplayer constructor
+     * but operates in-place so GamePanel can reuse the same state object.
+     */
+    public void reloadFromClient(INetworkClient client) {
+        currentLevelIndex  = client.getLevelIdx();
+        config             = LevelConfig.ALL[currentLevelIndex];
+        exitTileX          = client.getMapSize() - 1;
+        exitTileY          = client.getMapSize() - 1;
+
+        levelComplete      = false;
+        gameOverMenu       = false;
+        victory            = false;
+        selectedMenuOption = 0;
+        paused             = false;
+        floatPhase         = 0;
+
+        this.map  = client.getServerMap();
+        this.door = new Door(exitTileX, exitTileY);
+
+        monsters.clear();
+        for (int i = 0; i < config.monsterCount; i++)
+            monsters.add(new MonsterEntity(0, 0, TILE_SIZE));
+
+        items.clear();
+        for (double[] b : client.getServerBalls())
+            items.add(new Ball(b[0], b[1]));
+
+        remainingTimeMillis = config.timeLimitMillis;
+    }
+
     public boolean collectItems(IPlayer player) {
         boolean collectedSomething = false;
 

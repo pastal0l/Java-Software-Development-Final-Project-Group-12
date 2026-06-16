@@ -170,6 +170,12 @@ public class GamePanel extends JPanel implements ActionListener {
             remotePlayer.angle = nc.getRemotePlayerAngle();
         }
 
+        // Level-advance signal arrives before GAME_OVER — handle it first
+        if (nc.isNextLevelReady()) {
+            advanceMultiplayerLevel();
+            return;
+        }
+
         if (nc.isGameOver() && !state.levelComplete) {
             if (nc.isRemotePlayerLeft()) state.remotePlayerLeft = true;
             sound.stopMonsterSound();
@@ -241,6 +247,19 @@ public class GamePanel extends JPanel implements ActionListener {
         input.reset();
         timer.start();
         input.enableMouseCapture();
+    }
+
+    /** Seamlessly transition to the next level in multiplayer (server-driven). */
+    private void advanceMultiplayerLevel() {
+        state.reloadFromClient(networkClient);
+        networkClient.clearNextLevel();
+        double sx = GameState.START_TILE_X * TILE_SIZE + TILE_SIZE / 2.0;
+        double sy = GameState.START_TILE_Y * TILE_SIZE + TILE_SIZE / 2.0;
+        player.reset(sx, sy, Math.toRadians(45));
+        input.reset();
+        if (!timer.isRunning()) timer.start();
+        input.enableMouseCapture();
+        sound.stopMonsterSound();
     }
 
     void returnToMenu() {
