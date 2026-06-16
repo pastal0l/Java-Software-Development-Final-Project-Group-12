@@ -42,7 +42,8 @@ public class NetworkClient implements INetworkClient {
     private volatile boolean gameOver          = false;
     private volatile boolean gameWon           = false;
     private volatile boolean remotePlayerLeft  = false;
-    private volatile boolean nextLevelReady    = false;
+    private volatile boolean nextLevelReady       = false;
+    private volatile boolean levelCompleteScreen  = false;
 
     /** Per-monster positions and chase flag (length = monsterCount). */
     private volatile double[]  monsterX       = new double[0];
@@ -127,11 +128,25 @@ public class NetworkClient implements INetworkClient {
 
     @Override
     public void clearNextLevel() {
-        nextLevelReady = false;
-        serverDoorOpen = false;
-        gameOver       = false;
-        gameWon        = false;
+        nextLevelReady       = false;
+        levelCompleteScreen  = false;
+        serverDoorOpen       = false;
+        gameOver             = false;
+        gameWon              = false;
         diamondsTaken.clear();
+    }
+
+    @Override
+    public boolean isLevelCompleteScreen() { return levelCompleteScreen; }
+
+    @Override
+    public void sendReady() {
+        if (writer != null) writer.println("READY");
+    }
+
+    @Override
+    public void sendQuitLevel() {
+        if (writer != null) writer.println("QUIT_LEVEL");
     }
 
     @Override
@@ -246,11 +261,15 @@ public class NetworkClient implements INetworkClient {
             gameWon  = line.endsWith(":1");
             gameOver = true;
 
+        // ── Between-level intermission ────────────────────────────────────
+        } else if (line.startsWith("LEVEL_COMPLETE:")) {
+            levelCompleteScreen = true;
+
         // ── Next-level handshake ──────────────────────────────────────────
         } else if (line.equals("NEXT_LEVEL")) {
             // Reset per-level flags; wait for new map data + START_NEXT
-            serverDoorOpen = false;
-            nextLevelReady = false;
+            serverDoorOpen      = false;
+            nextLevelReady      = false;
         } else if (line.startsWith("MAP_SIZE:")) {
             mapSize = Integer.parseInt(line.substring(9).trim());
         } else if (line.startsWith("LEVEL:")) {

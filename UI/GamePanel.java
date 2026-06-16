@@ -16,6 +16,7 @@ import javax.swing.*;
 
 import java.awt.*;
 import java.awt.event.*;
+import java.awt.geom.RoundRectangle2D;
 
 public class GamePanel extends JPanel implements ActionListener {
 
@@ -33,6 +34,11 @@ public class GamePanel extends JPanel implements ActionListener {
     private final ISoundPlayer sound;
     private long   lastUpdateTime = System.currentTimeMillis();
     private Runnable returnToMenuAction;
+
+    // Multiplayer between-level intermission state
+    private boolean mpIntermission = false;   // showing the Continue/Quit screen
+    private boolean mpReadySent    = false;   // this player clicked Continue
+    private int     mpMenuSelected = 0;       // 0 = Continue, 1 = Quit
 
     // ── Constructors ─────────────────────────────────────────────────────
 
@@ -95,15 +101,115 @@ public class GamePanel extends JPanel implements ActionListener {
     @Override
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
-        
+
+        // Full-screen intermission overlay — draw instead of game view
+        if (mpIntermission) {
+            drawIntermissionOverlay(g, getWidth(), getHeight());
+            return;
+        }
+
         // We pass primitives and state objects downward so Renderer remains decoupled!
         double staminaPct = player.stamina / PlayerController.MAX_STAMINA;
         boolean isMultiplayer = (networkClient != null);
 
-        renderer.render(g, getWidth(), getHeight(), state, 
-                        player.playerX, player.playerY, player.playerAngle, 
-                        player.sprinting, staminaPct, player.exhausted, 
+        renderer.render(g, getWidth(), getHeight(), state,
+                        player.playerX, player.playerY, player.playerAngle,
+                        player.sprinting, staminaPct, player.exhausted,
                         remotePlayer, isMultiplayer);
+    }
+
+    // ── Intermission overlay ──────────────────────────────────────────────
+
+    private void drawIntermissionOverlay(Graphics g, int w, int h) {
+        Graphics2D g2 = (Graphics2D) g;
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,  RenderingHints.VALUE_ANTIALIAS_ON);
+        g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+
+        // Dark full-screen background
+        g2.setColor(new Color(5, 10, 25));
+        g2.fillRect(0, 0, w, h);
+
+        // Glowing card
+        int cw = 480, ch = 300;
+        int cx = w / 2 - cw / 2, cy = h / 2 - ch / 2;
+
+        // Card shadow
+        g2.setColor(new Color(0, 200, 80, 30));
+        g2.fillRoundRect(cx - 6, cy - 6, cw + 12, ch + 12, 28, 28);
+
+        // Card body
+        g2.setColor(new Color(12, 28, 55));
+        g2.fillRoundRect(cx, cy, cw, ch, 20, 20);
+
+        // Card border
+        g2.setColor(new Color(60, 200, 90));
+        g2.setStroke(new BasicStroke(2f));
+        g2.drawRoundRect(cx, cy, cw, ch, 20, 20);
+
+        int mx = w / 2;   // horizontal center
+
+        // ── Title ────────────────────────────────────────────────────────
+        g2.setFont(new Font("Segoe UI", Font.BOLD, 32));
+        g2.setColor(new Color(80, 230, 110));
+        drawCentered(g2, "✓  LEVEL COMPLETE!", mx, cy + 62);
+
+        // Thin divider
+        g2.setColor(new Color(60, 200, 90, 80));
+        g2.setStroke(new BasicStroke(1f));
+        g2.drawLine(cx + 30, cy + 80, cx + cw - 30, cy + 80);
+
+        if (mpReadySent) {
+            // ── Waiting for partner ───────────────────────────────────────
+            g2.setFont(new Font("Segoe UI", Font.BOLD, 20));
+            g2.setColor(new Color(230, 210, 70));
+            drawCentered(g2, "Waiting for partner…", mx, cy + 145);
+
+            g2.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+            g2.setColor(new Color(120, 120, 120));
+            drawCentered(g2, "The next level will begin once both players are ready.", mx, cy + 178);
+        } else {
+            // ── Menu options ──────────────────────────────────────────────
+            String[] opts  = {"Continue  →", "Quit"};
+            Color[]  cols  = {new Color(80, 220, 100), new Color(200, 90, 90)};
+            int      optY  = cy + 130;
+
+            for (int i = 0; i < opts.length; i++) {
+                boolean sel = (i == mpMenuSelected);
+                int     oy  = optY + i * 58;
+
+                if (sel) {
+                    // Highlight pill
+                    g2.setColor(new Color(cols[i].getRed(), cols[i].getGreen(), cols[i].getBlue(), 35));
+                    g2.fillRoundRect(cx + 60, oy - 26, cw - 120, 38, 12, 12);
+                    g2.setColor(cols[i]);
+                    g2.setStroke(new BasicStroke(1.5f));
+                    g2.drawRoundRect(cx + 60, oy - 26, cw - 120, 38, 12, 12);
+                }
+
+                g2.setFont(new Font("Segoe UI", Font.BOLD, sel ? 22 : 19));
+                g2.setColor(sel ? cols[i] : new Color(140, 140, 140));
+                drawCentered(g2, opts[i], mx, oy);
+
+                if (sel) {
+                    // Arrow indicator
+                    g2.setFont(new Font("Segoe UI", Font.BOLD, 18));
+                    g2.setColor(cols[i]);
+                    FontMetrics fm = g2.getFontMetrics();
+                    g2.drawString("▶", cx + 70, oy);
+                }
+            }
+        }
+
+        // ── Hint bar ─────────────────────────────────────────────────────
+        g2.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        g2.setColor(new Color(80, 80, 80));
+        drawCentered(g2, "↑ ↓  Navigate    Enter  Select", mx, cy + ch - 14);
+    }
+
+    /** Draw a string horizontally centred at (cx, y). */
+    private void drawCentered(Graphics2D g2, String text, int cx, int y) {
+        FontMetrics fm = g2.getFontMetrics();
+        g2.drawString(text, cx - fm.stringWidth(text) / 2, y);
     }
 
     // ── Update ────────────────────────────────────────────────────────────
@@ -140,6 +246,30 @@ public class GamePanel extends JPanel implements ActionListener {
 
     private void updateMultiplayer(long dt) {
         INetworkClient nc = networkClient;
+
+        // ── Intermission: already showing screen — wait for START_NEXT ────
+        if (mpIntermission) {
+            if (nc.isNextLevelReady()) {
+                mpIntermission = false;
+                mpReadySent    = false;
+                mpMenuSelected = 0;
+                advanceMultiplayerLevel();
+            }
+            return;
+        }
+
+        // ── Server just finished a level — show the intermission UI ───────
+        if (nc.isLevelCompleteScreen()) {
+            mpIntermission = true;
+            mpReadySent    = false;
+            mpMenuSelected = 0;
+            sound.stopMonsterSound();
+            input.disableMouseCapture();
+            input.reset();
+            repaint();
+            return;
+        }
+
         state.remainingTimeMillis = nc.getServerTimeMs();
 
         int[] dc;
@@ -305,9 +435,9 @@ public class GamePanel extends JPanel implements ActionListener {
                 case KeyEvent.VK_LEFT  -> input.turnLeft     = true;
                 case KeyEvent.VK_RIGHT -> input.turnRight    = true;
                 case KeyEvent.VK_SHIFT -> input.shiftHeld    = true;
-                case KeyEvent.VK_UP    -> { if (state.paused) navigatePause(-1); else if (state.gameOverMenu) navigateMenu(-1); }
-                case KeyEvent.VK_DOWN  -> { if (state.paused) navigatePause(+1); else if (state.gameOverMenu) navigateMenu(+1); }
-                case KeyEvent.VK_ENTER -> { if (state.paused) selectPause();     else if (state.gameOverMenu) selectMenu(); }
+                case KeyEvent.VK_UP    -> { if (mpIntermission) navigateIntermission(-1); else if (state.paused) navigatePause(-1); else if (state.gameOverMenu) navigateMenu(-1); }
+                case KeyEvent.VK_DOWN  -> { if (mpIntermission) navigateIntermission(+1); else if (state.paused) navigatePause(+1); else if (state.gameOverMenu) navigateMenu(+1); }
+                case KeyEvent.VK_ENTER -> { if (mpIntermission) selectIntermission();     else if (state.paused) selectPause();     else if (state.gameOverMenu) selectMenu(); }
                 case KeyEvent.VK_ESCAPE -> { if (!state.gameOverMenu) togglePauseMenu(); }
                 case KeyEvent.VK_R     -> { if (networkClient == null && !state.paused) restartGame(); }
             }
@@ -323,6 +453,24 @@ public class GamePanel extends JPanel implements ActionListener {
                 case KeyEvent.VK_RIGHT -> input.turnRight    = false;
                 case KeyEvent.VK_SHIFT -> input.shiftHeld    = false;
             }
+        }
+    }
+
+    private void navigateIntermission(int d) {
+        if (mpReadySent) return;
+        mpMenuSelected = (mpMenuSelected + 2 + d) % 2;
+        repaint();
+    }
+
+    private void selectIntermission() {
+        if (mpReadySent) return;
+        if (mpMenuSelected == 0) {   // Continue
+            networkClient.sendReady();
+            mpReadySent = true;
+            repaint();
+        } else {                     // Quit
+            networkClient.sendQuitLevel();
+            returnToMenu();
         }
     }
 

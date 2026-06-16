@@ -12,8 +12,10 @@ public class GameServer implements Runnable {
     private final PrintWriter[] writers = new PrintWriter[2];
 
     private GameLogic logic;
-    private boolean   gameActive   = false;
-    private int       currentLevel = 0;
+    private boolean   gameActive      = false;
+    private int       currentLevel    = 0;
+    private volatile boolean waitingForReady = false;
+    private final boolean[]  readyFlags      = {false, false};
 
     @Override public void run() {
         try { serve(); } catch (Exception e) {
@@ -65,12 +67,13 @@ public class GameServer implements Runnable {
             if (outcome[0]) {
                 outcome[0] = false;
                 if (currentLevel + 1 < LevelConfig.ALL.length) {
-                    // Advance to the next level
-                    currentLevel++;
-                    synchronized (this) { logic.loadLevel(currentLevel, playerPos); }
-                    broadcast("NEXT_LEVEL");
-                    pushLevelData();
-                    broadcast("START_NEXT");
+                    // Pause the game and ask both players to ready up
+                    synchronized (this) {
+                        readyFlags[0] = false;
+                        readyFlags[1] = false;
+                        waitingForReady = true;
+                    }
+                    broadcast("LEVEL_COMPLETE:" + currentLevel);
                 } else {
                     // All levels complete — total victory
                     broadcast("GAME_OVER:1");
@@ -82,7 +85,22 @@ public class GameServer implements Runnable {
                 gameActive = false;
             }
 
-            if (gameActive) sendState();
+            // While waiting for ready-up, check if both players confirmed
+            if (waitingForReady) {
+                synchronized (this) {
+                    if (readyFlags[0] && readyFlags[1]) {
+                        waitingForReady = false;
+                        currentLevel++;
+                        logic.loadLevel(currentLevel, playerPos);
+                        broadcast("NEXT_LEVEL");
+                        pushLevelData();
+                        broadcast("START_NEXT");
+                    }
+                }
+            }
+
+            // Don't send game state while the intermission screen is showing
+            if (gameActive && !waitingForReady) sendState();
             Thread.sleep(50);
         }
     }
@@ -139,6 +157,11 @@ public class GameServer implements Runnable {
                         playerPos[id][1] = Double.parseDouble(p[1]);
                         playerPos[id][2] = Double.parseDouble(p[2]);
                     }
+                } else if (line.equals("READY")) {
+                    synchronized (this) { readyFlags[id] = true; }
+                } else if (line.equals("QUIT_LEVEL")) {
+                    synchronized (this) { waitingForReady = false; }
+                    if (gameActive) { broadcast("GAME_OVER:0"); gameActive = false; }
                 }
             }
         } catch (IOException e) {

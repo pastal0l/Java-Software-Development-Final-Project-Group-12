@@ -31,4 +31,13 @@ public interface INetworkClient {
 
     /** Called by GamePanel after it has consumed the next-level data; resets the flag. */
     void clearNextLevel();
+
+    /** True while the server is showing the between-level intermission (LEVEL_COMPLETE). */
+    boolean isLevelCompleteScreen();
+
+    /** Tell the server this player is ready to continue to the next level. */
+    void sendReady();
+
+    /** Tell the server this player wants to quit; ends the session for both. */
+    void sendQuitLevel();
 }
