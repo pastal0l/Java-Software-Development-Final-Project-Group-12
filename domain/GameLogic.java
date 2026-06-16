@@ -1,9 +1,5 @@
-package network;
+package domain;
 
-import domain.Ball;
-import domain.Door;
-import domain.LevelConfig;
-import domain.MonsterEntity;
 import world.MazeGenerator;
 import static domain.GameConstants.TILE_SIZE;
 

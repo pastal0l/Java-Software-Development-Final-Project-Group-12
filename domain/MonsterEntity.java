@@ -19,7 +19,6 @@ public class MonsterEntity extends Entity {
     private boolean pursuitActive = false;
 
     private List<Pathfinder.Node> currentPath          = new ArrayList<>();
-    private long                  lastPathCalculationTime = 0;
     private int                   stuckFrames          = 0;
     private long                  ignoreSightUntil     = 0;
 
@@ -117,6 +116,7 @@ public class MonsterEntity extends Entity {
     public boolean isFacingPlayer(double playerX, double playerY) {
         return inFrontFOV(playerX, playerY, 0.0); // ±90° for sprite orientation
     }
+
 
     private void wander(int[][] map, int tileSize) {
         if (currentPath.isEmpty()) {

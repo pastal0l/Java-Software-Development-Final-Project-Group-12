@@ -1,129 +1,103 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <class-diagram version="1.2.4" icons="true" always-add-relationships="true" generalizations="true" realizations="true" 
   associations="true" dependencies="true" nesting-relationships="true" router="FAN">  
-  <package id="1" language="java" name="UI" project="Java-Software-Development-Final-Project-Group-12" 
-    file="/Java-Software-Development-Final-Project-Group-12/UI" binary="false" corner="BOTTOM_RIGHT">    
-    <position height="-1" width="-1" x="163" y="226"/>    
-    <display autosize="true" stereotype="true" sort-features="false" accessors="true"/>  
-  </package>  
-  <package id="2" language="java" name="network" project="Java-Software-Development-Final-Project-Group-12" 
-    file="/Java-Software-Development-Final-Project-Group-12/network" binary="false" corner="BOTTOM_RIGHT">    
-    <position height="49" width="102" x="346" y="126"/>    
-    <display autosize="true" stereotype="true" sort-features="false" accessors="true"/>  
-  </package>  
-  <package id="3" language="java" name="domain" project="Java-Software-Development-Final-Project-Group-12" 
-    file="/Java-Software-Development-Final-Project-Group-12/domain" binary="false" corner="BOTTOM_RIGHT">    
-    <position height="49" width="102" x="346" y="304"/>    
-    <display autosize="true" stereotype="true" sort-features="false" accessors="true"/>  
-  </package>  
-  <package id="4" language="java" name="audio" project="Java-Software-Development-Final-Project-Group-12" 
+  <package id="1" language="java" name="audio" project="Java-Software-Development-Final-Project-Group-12" 
     file="/Java-Software-Development-Final-Project-Group-12/audio" binary="false" corner="BOTTOM_RIGHT">    
-    <position height="49" width="102" x="41" y="304"/>    
+    <position height="49" width="102" x="326" y="393"/>    
     <display autosize="true" stereotype="true" sort-features="false" accessors="true"/>  
   </package>  
-  <package id="5" language="java" name="AI" project="Java-Software-Development-Final-Project-Group-12" 
+  <package id="2" language="java" name="AI" project="Java-Software-Development-Final-Project-Group-12" 
     file="/Java-Software-Development-Final-Project-Group-12/AI" binary="false" corner="BOTTOM_RIGHT">    
-    <position height="49" width="102" x="388" y="482"/>    
+    <position height="49" width="102" x="184" y="393"/>    
     <display autosize="true" stereotype="true" sort-features="false" accessors="true"/>  
   </package>  
-  <package id="6" language="java" name="rendering" project="Java-Software-Development-Final-Project-Group-12" 
-    file="/Java-Software-Development-Final-Project-Group-12/rendering" binary="false" corner="BOTTOM_RIGHT">    
-    <position height="49" width="102" x="346" y="37"/>    
-    <display autosize="true" stereotype="true" sort-features="false" accessors="true"/>  
-  </package>  
-  <package id="7" language="java" name="world" project="Java-Software-Development-Final-Project-Group-12" 
+  <package id="3" language="java" name="world" project="Java-Software-Development-Final-Project-Group-12" 
     file="/Java-Software-Development-Final-Project-Group-12/world" binary="false" corner="BOTTOM_RIGHT">    
-    <position height="49" width="102" x="204" y="304"/>    
+    <position height="49" width="102" x="468" y="393"/>    
     <display autosize="true" stereotype="true" sort-features="false" accessors="true"/>  
   </package>  
-  <package id="8" language="java" name="entity" project="Java-Software-Development-Final-Project-Group-12" 
-    file="/Java-Software-Development-Final-Project-Group-12/entity" binary="false" corner="BOTTOM_RIGHT">    
-    <position height="49" width="102" x="388" y="393"/>    
+  <package id="4" language="java" name="UI" project="Java-Software-Development-Final-Project-Group-12" 
+    file="/Java-Software-Development-Final-Project-Group-12/UI" binary="false" corner="BOTTOM_RIGHT">    
+    <position height="49" width="102" x="205" y="126"/>    
     <display autosize="true" stereotype="true" sort-features="false" accessors="true"/>  
   </package>  
-  <package id="9" language="java" name="" project="Java-Software-Development-Final-Project-Group-12" 
-    file="C:/Users/ASUS/.p2/pool/plugins/org.eclipse.justj.openjdk.hotspot.jre.full.win32.x86_64_21.0.10.v20260205-0638/jre/lib/jrt-fs.jar" 
-    binary="true" corner="BOTTOM_RIGHT">    
-    <position height="-1" width="-1" x="128" y="127"/>    
+  <package id="5" language="java" name="" project="Java-Software-Development-Final-Project-Group-12" 
+    file="/Java-Software-Development-Final-Project-Group-12" binary="false" corner="BOTTOM_RIGHT">    
+    <position height="49" width="102" x="205" y="37"/>    
     <display autosize="true" stereotype="true" sort-features="false" accessors="true"/>  
   </package>  
-  <dependency id="10">    
-    <bendpoint x="336" y="215"/>    
-    <end type="SOURCE" refId="2"/>    
-    <end type="TARGET" refId="7"/>  
-  </dependency>  
-  <dependency id="11">    
-    <bendpoint x="499" y="126"/>    
-    <bendpoint x="499" y="215"/>    
-    <bendpoint x="499" y="304"/>    
-    <end type="SOURCE" refId="6"/>    
-    <end type="TARGET" refId="8"/>  
-  </dependency>  
-  <dependency id="12">    
-    <end type="SOURCE" refId="1"/>    
-    <end type="TARGET" refId="7"/>  
-  </dependency>  
-  <dependency id="13">    
-    <end type="SOURCE" refId="1"/>    
-    <end type="TARGET" refId="4"/>  
-  </dependency>  
-  <dependency id="14">    
-    <end type="SOURCE" refId="6"/>    
-    <end type="TARGET" refId="2"/>  
-  </dependency>  
-  <dependency id="15">    
-    <end type="SOURCE" refId="8"/>    
-    <end type="TARGET" refId="5"/>  
-  </dependency>  
-  <dependency id="16">    
-    <bendpoint x="173" y="304"/>    
-    <end type="SOURCE" refId="1"/>    
-    <end type="TARGET" refId="8"/>  
-  </dependency>  
-  <dependency id="17">    
-    <bendpoint x="294" y="126"/>    
-    <end type="SOURCE" refId="6"/>    
-    <end type="TARGET" refId="1"/>  
-  </dependency>  
-  <dependency id="18">    
-    <end type="SOURCE" refId="1"/>    
-    <end type="TARGET" refId="2"/>  
-  </dependency>  
-  <dependency id="19">    
-    <bendpoint x="357" y="215"/>    
-    <end type="SOURCE" refId="2"/>    
-    <end type="TARGET" refId="3"/>  
-  </dependency>  
-  <dependency id="20">    
-    <bendpoint x="457" y="215"/>    
-    <bendpoint x="478" y="304"/>    
-    <end type="SOURCE" refId="2"/>    
-    <end type="TARGET" refId="8"/>  
-  </dependency>  
-  <dependency id="21">    
-    <bendpoint x="315" y="126"/>    
-    <end type="SOURCE" refId="1"/>    
+  <package id="6" language="java" name="network" project="Java-Software-Development-Final-Project-Group-12" 
+    file="/Java-Software-Development-Final-Project-Group-12/network" binary="false" corner="BOTTOM_RIGHT">    
+    <position height="49" width="102" x="42" y="393"/>    
+    <display autosize="true" stereotype="true" sort-features="false" accessors="true"/>  
+  </package>  
+  <package id="7" language="java" name="rendering" project="Java-Software-Development-Final-Project-Group-12" 
+    file="/Java-Software-Development-Final-Project-Group-12/rendering" binary="false" corner="BOTTOM_RIGHT">    
+    <position height="49" width="102" x="82" y="215"/>    
+    <display autosize="true" stereotype="true" sort-features="false" accessors="true"/>  
+  </package>  
+  <package id="8" language="java" name="domain" project="Java-Software-Development-Final-Project-Group-12" 
+    file="/Java-Software-Development-Final-Project-Group-12/domain" binary="false" corner="BOTTOM_RIGHT">    
+    <position height="-1" width="-1" x="270" y="274"/>    
+    <display autosize="true" stereotype="true" sort-features="false" accessors="true"/>  
+  </package>  
+  <dependency id="9">    
+    <bendpoint x="51" y="215"/>    
+    <bendpoint x="51" y="304"/>    
+    <end type="SOURCE" refId="4"/>    
     <end type="TARGET" refId="6"/>  
   </dependency>  
-  <dependency id="22">    
-    <bendpoint x="478" y="126"/>    
-    <bendpoint x="478" y="215"/>    
-    <end type="SOURCE" refId="6"/>    
-    <end type="TARGET" refId="3"/>  
-  </dependency>  
-  <dependency id="23">    
-    <end type="SOURCE" refId="3"/>    
-    <end type="TARGET" refId="8"/>  
-  </dependency>  
-  <dependency id="24">    
-    <end type="SOURCE" refId="1"/>    
-    <end type="TARGET" refId="3"/>  
-  </dependency>  
-  <dependency id="25">    
-    <end type="SOURCE" refId="2"/>    
+  <dependency id="10">    
+    <end type="SOURCE" refId="8"/>    
     <end type="TARGET" refId="1"/>  
   </dependency>  
-  <classifier-display autosize="true" stereotype="true" package="true" initial-value="false" signature="true" 
+  <dependency id="11">    
+    <bendpoint x="72" y="304"/>    
+    <end type="SOURCE" refId="7"/>    
+    <end type="TARGET" refId="6"/>  
+  </dependency>  
+  <dependency id="12">    
+    <bendpoint x="335" y="215"/>    
+    <bendpoint x="335" y="304"/>    
+    <end type="SOURCE" refId="4"/>    
+    <end type="TARGET" refId="1"/>  
+  </dependency>  
+  <dependency id="13">    
+    <end type="SOURCE" refId="8"/>    
+    <end type="TARGET" refId="2"/>  
+  </dependency>  
+  <dependency id="14">    
+    <end type="SOURCE" refId="8"/>    
+    <end type="TARGET" refId="3"/>  
+  </dependency>  
+  <dependency id="15">    
+    <end type="SOURCE" refId="5"/>    
+    <end type="TARGET" refId="4"/>  
+  </dependency>  
+  <dependency id="16">    
+    <end type="SOURCE" refId="4"/>    
+    <end type="TARGET" refId="7"/>  
+  </dependency>  
+  <dependency id="17">    
+    <end type="SOURCE" refId="8"/>    
+    <end type="TARGET" refId="6"/>  
+  </dependency>  
+  <dependency id="18">    
+    <bendpoint x="356" y="215"/>    
+    <bendpoint x="356" y="304"/>    
+    <end type="SOURCE" refId="4"/>    
+    <end type="TARGET" refId="3"/>  
+  </dependency>  
+  <dependency id="19">    
+    <bendpoint x="214" y="215"/>    
+    <end type="SOURCE" refId="4"/>    
+    <end type="TARGET" refId="8"/>  
+  </dependency>  
+  <dependency id="20">    
+    <end type="SOURCE" refId="7"/>    
+    <end type="TARGET" refId="8"/>  
+  </dependency>  
+  <classifier-display autosize="true" stereotype="true" package="true" initial-value="true" signature="true" 
     sort-features="false" accessors="true" visibility="true">    
     <attributes public="true" package="true" protected="true" private="true" static="true"/>    
     <operations public="true" package="true" protected="true" private="true" static="true"/>  

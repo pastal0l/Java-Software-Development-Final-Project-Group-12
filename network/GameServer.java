@@ -2,6 +2,8 @@ package network;
 
 import java.io.*;
 import java.net.*;
+
+import domain.GameLogic;
 import domain.LevelConfig;
 
 public class GameServer implements Runnable {

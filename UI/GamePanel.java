@@ -11,6 +11,7 @@ import rendering.IRenderer;
 import rendering.Renderer;
 import world.IMapGenerator;
 import static domain.GameConstants.*;
+import java.util.List;
 
 import javax.swing.*;
 
@@ -52,10 +53,19 @@ public class GamePanel extends JPanel implements ActionListener {
         input = new InputHandler(this);
         this.sound = sound;
 
-        if (client == null) {
-            state = new GameState(0, mapGen, sound);
-        } else {
-            state = new GameState(client, 0, mapGen, sound);   // multiplayer constructor
+            if (client == null) {
+                state = new GameState(0, mapGen, sound);
+            } else {
+                if (client != null) {
+                    // 1. UI extracts data from the network
+                    int levelIdx = client.getLevelIdx();
+                    int mapSize = client.getMapSize();
+                    int[][] serverMap = client.getServerMap();
+                    List<double[]> serverBalls = client.getServerBalls();
+
+                    // 2. UI feeds raw data to the domain
+                    this.state = new GameState(levelIdx, mapSize, serverMap, serverBalls, sound);
+            }
             remotePlayer = new RemotePlayer("P" + (client.getPlayerId() == 0 ? 2 : 1));
         }
 
@@ -193,7 +203,6 @@ public class GamePanel extends JPanel implements ActionListener {
                     // Arrow indicator
                     g2.setFont(new Font("Segoe UI", Font.BOLD, 18));
                     g2.setColor(cols[i]);
-                    FontMetrics fm = g2.getFontMetrics();
                     g2.drawString("▶", cx + 70, oy);
                 }
             }
@@ -385,7 +394,13 @@ public class GamePanel extends JPanel implements ActionListener {
 
     /** Seamlessly transition to the next level in multiplayer (server-driven). */
     private void advanceMultiplayerLevel() {
-        state.reloadFromClient(networkClient);
+        int levelIdx = networkClient.getLevelIdx();
+        int mapSize = networkClient.getMapSize();
+        int[][] serverMap = networkClient.getServerMap();
+        List<double[]> serverBalls = networkClient.getServerBalls();
+
+        // 2. UI feeds ONLY the raw data down into the Domain package
+        state.reloadMultiplayerState(levelIdx, mapSize, serverMap, serverBalls);
         networkClient.clearNextLevel();
         double sx = GameState.START_TILE_X * TILE_SIZE + TILE_SIZE / 2.0;
         double sy = GameState.START_TILE_Y * TILE_SIZE + TILE_SIZE / 2.0;

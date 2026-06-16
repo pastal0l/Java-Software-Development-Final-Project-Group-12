@@ -1,13 +1,14 @@
 package domain;
 
 import audio.ISoundPlayer;
-import network.INetworkClient;
 import world.IMapGenerator;
 import static domain.GameConstants.TILE_SIZE;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
+
+// NOTICE: Zero imports from the 'network' package! The domain is now pure.
 
 public class GameState {
 
@@ -42,46 +43,46 @@ public class GameState {
     private int     currentLevelIndex;
     private final Random random = new Random();
 
-    // Singleplayer Constructor
+    // ── Singleplayer Constructor ──
     public GameState(int levelIndex, IMapGenerator mapGenerator, ISoundPlayer sound) {
         this.mapGenerator = mapGenerator;
         this.sound = sound;
         loadLevel(levelIndex);
     }
 
-    // Multiplayer Constructor
-    public GameState(INetworkClient client, int levelIndex, IMapGenerator mapGenerator, ISoundPlayer sound) {
-        this.mapGenerator = mapGenerator;
+    // ── Multiplayer Constructor (DECOUPLED) ──
+    // Instead of taking an INetworkClient, it takes standard Java datatypes.
+    public GameState(int levelIndex, int mapSize, int[][] serverMap, List<double[]> serverBalls, ISoundPlayer sound) {
+        this.mapGenerator = null; // Server provides the map, no local generation needed
         this.sound = sound;
-        currentLevelIndex  = client.getLevelIdx();
-        config             = LevelConfig.ALL[currentLevelIndex];
+        this.currentLevelIndex  = levelIndex;
+        this.config             = LevelConfig.ALL[levelIndex];
         
-        // Use the map size specified by the server
-        exitTileX          = client.getMapSize() - 1;
-        exitTileY          = client.getMapSize() - 1;
+        this.exitTileX          = mapSize - 1;
+        this.exitTileY          = mapSize - 1;
 
-        levelComplete      = false;
-        gameOverMenu       = false;
-        victory            = false;
-        selectedMenuOption = 0;
+        this.levelComplete      = false;
+        this.gameOverMenu       = false;
+        this.victory            = false;
+        this.selectedMenuOption = 0;
 
-        // 1. Load the exact map layout sent by the server
-        this.map = client.getServerMap();
+        // 1. Load the exact map layout passed in
+        this.map = serverMap;
         this.door = new Door(exitTileX, exitTileY);
 
-        // 2. Spawn dummy monsters. Their logic won't run locally.
+        // 2. Spawn dummy monsters
         monsters.clear();
         for (int i = 0; i < config.monsterCount; i++) {
             monsters.add(new MonsterEntity(0, 0, TILE_SIZE));
         }
 
-        // 3. FIXED: Load the exact ball locations into the generic items list
+        // 3. Load the exact ball locations passed in
         items.clear();
-        for (double[] b : client.getServerBalls()) {
-            items.add(new Ball(b[0], b[1])); // Stored as generic Item
+        for (double[] b : serverBalls) {
+            items.add(new Ball(b[0], b[1])); 
         }
 
-        remainingTimeMillis = config.timeLimitMillis;
+        this.remainingTimeMillis = config.timeLimitMillis;
     }
 
     public void loadLevel(int index) {
@@ -104,9 +105,6 @@ public class GameState {
         
         spawnMonsters(config.monsterCount);
         spawnBalls(config.objectiveCount);
-        
-        // Example: If you wanted Medkits later, you could safely call it here:
-        // spawnMedkits(2); 
 
         remainingTimeMillis = config.timeLimitMillis;
     }
@@ -114,15 +112,14 @@ public class GameState {
     public int getCurrentLevelIndex() { return currentLevelIndex; }
 
     /**
-     * Resets the game state from fresh server data after a multiplayer level
-     * transition (NEXT_LEVEL handshake).  Mirrors the multiplayer constructor
-     * but operates in-place so GamePanel can reuse the same state object.
+     * DECOUPLED RELOAD: Resets the game state from fresh server data 
+     * without needing to know that a network or client exists.
      */
-    public void reloadFromClient(INetworkClient client) {
-        currentLevelIndex  = client.getLevelIdx();
+    public void reloadMultiplayerState(int levelIndex, int mapSize, int[][] serverMap, List<double[]> serverBalls) {
+        currentLevelIndex  = levelIndex;
         config             = LevelConfig.ALL[currentLevelIndex];
-        exitTileX          = client.getMapSize() - 1;
-        exitTileY          = client.getMapSize() - 1;
+        exitTileX          = mapSize - 1;
+        exitTileY          = mapSize - 1;
 
         levelComplete      = false;
         gameOverMenu       = false;
@@ -131,7 +128,7 @@ public class GameState {
         paused             = false;
         floatPhase         = 0;
 
-        this.map  = client.getServerMap();
+        this.map  = serverMap;
         this.door = new Door(exitTileX, exitTileY);
 
         monsters.clear();
@@ -139,7 +136,7 @@ public class GameState {
             monsters.add(new MonsterEntity(0, 0, TILE_SIZE));
 
         items.clear();
-        for (double[] b : client.getServerBalls())
+        for (double[] b : serverBalls)
             items.add(new Ball(b[0], b[1]));
 
         remainingTimeMillis = config.timeLimitMillis;
@@ -153,7 +150,6 @@ public class GameState {
             Item item = items.get(i);
             
             if (item.isPlayerNear(player)) {
-                // The item itself decides if it should be consumed
                 if (item.onCollect(player)) {
                     items.remove(i);
                     collectedSomething = true;
@@ -161,11 +157,9 @@ public class GameState {
             }
         }
 
-        // Check win condition: Are all the diamonds gone?
         if (collectedSomething) {
-            sound.playDing();
+            if (sound != null) sound.playDing();
             
-            // Look specifically for remaining Balls/Diamonds
             boolean ballsRemaining = items.stream().anyMatch(item -> item instanceof Ball);
             if (!ballsRemaining && !door.isOpen()) {
                 door.open();
@@ -209,7 +203,6 @@ public class GameState {
         int mapSize = config.mapSize;
         int spawned = 0;
         
-        // FIXED: Loop until we spawn the correct amount, checking the items list for collisions
         while (spawned < count) {
             int tx = 1 + random.nextInt(mapSize - 2);
             int ty = 1 + random.nextInt(mapSize - 2);
@@ -218,14 +211,12 @@ public class GameState {
             if ((tx == START_TILE_X && ty == START_TILE_Y)
                     || (tx == exitTileX && ty == exitTileY)) continue;
                     
-            // Check if ANY item is already occupying this exact tile
             boolean occupied = items.stream().anyMatch(
                 item -> (int)(item.getX() / TILE_SIZE) == tx
                      && (int)(item.getY() / TILE_SIZE) == ty);
                      
             if (occupied) continue;
             
-            // Add safely to the polymorphic list
             items.add(new Ball(
                 tx * TILE_SIZE + TILE_SIZE / 2.0,
                 ty * TILE_SIZE + TILE_SIZE / 2.0));
@@ -235,6 +226,8 @@ public class GameState {
     }
 
     private void generateRandomMap() {
+        if (mapGenerator == null) return; // Protects against null pointers in multiplayer
+
         map = mapGenerator.generateMaze(config.mapSize,
                 START_TILE_X, START_TILE_Y, exitTileX - 1, exitTileY);
         map[START_TILE_Y][START_TILE_X]     = 0;
