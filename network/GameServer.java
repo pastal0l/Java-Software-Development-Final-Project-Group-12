@@ -61,7 +61,7 @@ public class GameServer implements Runnable {
             long now = System.currentTimeMillis();
             long dt  = now - lastTick;
             lastTick = now;
-            if (dt > 0) synchronized (this) { logic.update(dt, playerPos); }
+            if (dt > 0 && !waitingForReady) synchronized (this) { logic.update(dt, playerPos); }
 
             // Handle end-of-level outcomes outside update() to avoid reentrancy
             if (outcome[0]) {
