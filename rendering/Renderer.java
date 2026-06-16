@@ -71,18 +71,48 @@ public class Renderer implements IRenderer {
             screenPixels = ((DataBufferInt) screenBuffer.getRaster().getDataBuffer()).getData();
         }
 
-        int horizon    = height / 2;
-        int skyColor   = (18 << 16) | (24 << 8) | 60;
-        int floorColor = (16 << 16) | (20 << 8) | 32;
+        int horizon = height / 2;
 
-        int row = 0;
+        // Sky gradient (dark at top → lighter near horizon)
         for (int y = 0; y < horizon; y++) {
-            int off = row++ * width;
-            for (int x = 0; x < width; x++) screenPixels[off + x] = skyColor;
+            int off = y * width;
+            int t = y * 255 / Math.max(1, horizon);
+            int skyR = 10 + t *  8 / 255;
+            int skyG = 10 + t * 14 / 255;
+            int skyB = 40 + t * 20 / 255;
+            int skyColorGrad = (skyR << 16) | (skyG << 8) | skyB;
+            for (int x = 0; x < width; x++) screenPixels[off + x] = skyColorGrad;
         }
+
+        // Stars (seeded, twinkling via floatPhase)
+        java.util.Random starRng = new java.util.Random(42);
+        for (int i = 0; i < 200; i++) {
+            int sx = starRng.nextInt(Math.max(1, width));
+            int sy = starRng.nextInt(Math.max(1, horizon));
+            double twinkle = 0.7 + 0.3 * Math.sin(game.state.floatPhase * 2.0 + i * 0.7);
+            int br = (int) (twinkle * 255);
+            screenPixels[sy * width + sx] = (br << 16) | (br << 8) | br;
+        }
+
+        // Moon
+        int moonX = width * 3 / 4, moonY = horizon / 4, moonR = 18;
+        for (int my = Math.max(0, moonY - moonR); my <= Math.min(horizon - 1, moonY + moonR); my++) {
+            for (int mx = Math.max(0, moonX - moonR); mx <= Math.min(width - 1, moonX + moonR); mx++) {
+                int ddx = mx - moonX, ddy = my - moonY;
+                if (ddx * ddx + ddy * ddy <= moonR * moonR)
+                    screenPixels[my * width + mx] = 0xFFF8DC;
+            }
+        }
+
+        // Grass floor gradient
         for (int y = horizon; y < height; y++) {
-            int off = row++ * width;
-            for (int x = 0; x < width; x++) screenPixels[off + x] = floorColor;
+            int off = y * width;
+            double depth = (double) (y - horizon) / Math.max(1, height - horizon);
+            int gr = (int) (18 + depth * 12);
+            int gg = (int) (48 + depth * 32);
+            int gb = (int) (14 + depth * 12);
+            int grassColor = (gr << 16) | (gg << 8) | gb;
+            for (int x = 0; x < width; x++) screenPixels[off + x] = grassColor;
         }
 
         double fov        = Math.toRadians(60);
@@ -157,19 +187,31 @@ public class Renderer implements IRenderer {
         double spritePerpDist = distance * Math.cos(relativeAngle);
         if (castRayDistance(game.player.playerAngle + relativeAngle) + 1.0 < spritePerpDist) return;
 
-        int screenX    = (int) (((relativeAngle / (fov / 2)) * 0.5 + 0.5) * width);
-        int spriteSize = Math.max(12, Math.min((int) ((TILE_SIZE * height) / distance * 0.4), 80));
-        int spriteY    = height / 2 - spriteSize / 2;
-        MonsterRenderer renderer = new MonsterRenderer(m);
+        int screenX  = (int) (((relativeAngle / (fov / 2)) * 0.5 + 0.5) * width);
+        int baseSize = Math.max(20, Math.min((int) ((TILE_SIZE * height) / distance * 0.7), 150));
 
-        BufferedImage sprite = renderer.getSprite();
+        // Ground-align: feet stick to the projected floor line
+        int horizonY   = height / 2;
+        int floorLineH = Math.max(1, Math.min((int) ((TILE_SIZE * height) / Math.max(1.0, spritePerpDist)), height));
+        int groundY    = horizonY + floorLineH / 2;
+
+        // Squish/breathing animation
+        double squishPhase = game.state.floatPhase * 1.5 + (m.getX() + m.getY()) * 0.01;
+        double squish      = Math.sin(squishPhase) * 0.12;
+        int spriteW = (int) Math.round(baseSize * (1.0 + squish));
+        int spriteH = (int) Math.round(baseSize * (1.0 - squish));
+        int spriteX = screenX - spriteW / 2;
+        int spriteY = groundY  - spriteH;
+
+        MonsterRenderer renderer = new MonsterRenderer(m);
+        BufferedImage sprite = renderer.getSprite(game.player.playerX, game.player.playerY);
         if (sprite != null) {
-            g.drawImage(sprite, screenX - spriteSize / 2, spriteY, spriteSize, spriteSize, null);
+            g.drawImage(sprite, spriteX, spriteY, spriteW, spriteH, null);
         } else {
             g.setColor(new Color(230, 40, 40, 220));
-            g.fillOval(screenX - spriteSize / 2, spriteY, spriteSize, spriteSize);
+            g.fillOval(spriteX, spriteY, spriteW, spriteH);
             g.setColor(Color.BLACK);
-            g.drawOval(screenX - spriteSize / 2, spriteY, spriteSize, spriteSize);
+            g.drawOval(spriteX, spriteY, spriteW, spriteH);
         }
     }
 
@@ -459,9 +501,12 @@ public class Renderer implements IRenderer {
         g.setColor(new Color(0, 0, 0, 160));
         g.fillRect(0, 0, width, height);
 
-        int numOpts   = game.state.pauseMenuOptions.length;
-        int boxWidth  = 360;
-        int boxHeight = 56 + numOpts * 42 + 36;
+        int numOpts       = game.state.pauseMenuOptions.length;
+        int boxWidth      = 460;
+        int titleAreaH    = 130;
+        int optionSpacing = 58;
+        int bottomPadding = 50;
+        int boxHeight = titleAreaH + numOpts * optionSpacing + bottomPadding;
         int boxX = width  / 2 - boxWidth  / 2;
         int boxY = height / 2 - boxHeight / 2;
 
@@ -470,19 +515,19 @@ public class Renderer implements IRenderer {
         g.setColor(new Color(70, 110, 210));
         g.drawRoundRect(boxX, boxY, boxWidth, boxHeight, 18, 18);
 
-        String title = game.networkClient != null ? "PAUSED" : "PAUSED";
-        g.setFont(g.getFont().deriveFont(Font.BOLD, 30f));
+        String title = "PAUSED";
+        g.setFont(g.getFont().deriveFont(Font.BOLD, 40f));
         g.setColor(Color.WHITE);
         int tw = g.getFontMetrics().stringWidth(title);
-        g.drawString(title, width / 2 - tw / 2, boxY + 44);
+        g.drawString(title, width / 2 - tw / 2, boxY + 60);
 
-        g.setFont(g.getFont().deriveFont(22f));
+        g.setFont(g.getFont().deriveFont(26f));
         for (int i = 0; i < numOpts; i++) {
             String opt = game.state.pauseMenuOptions[i];
-            int oy = boxY + 68 + i * 42;
+            int oy = boxY + titleAreaH + i * optionSpacing;
             if (i == game.state.pauseMenuSelected) {
                 g.setColor(new Color(50, 100, 220));
-                g.fillRoundRect(width / 2 - 130, oy - 27, 260, 34, 10, 10);
+                g.fillRoundRect(width / 2 - 160, oy - 32, 320, 44, 12, 12);
                 g.setColor(Color.WHITE);
             } else {
                 g.setColor(new Color(170, 200, 240));
