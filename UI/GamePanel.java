@@ -3,7 +3,8 @@ package UI;
 import audio.ISoundPlayer;
 import domain.Ball;
 import domain.GameConstants;
-import entity.MonsterEntity;
+import domain.GameState;
+import domain.MonsterEntity;
 import network.INetworkClient;
 import network.RemotePlayer;
 import rendering.IRenderer;
@@ -65,7 +66,7 @@ public class GamePanel extends JPanel implements ActionListener {
             @Override public void focusLost(FocusEvent e) { input.disableMouseCapture(); }
         });
 
-        renderer = new Renderer(this);
+        renderer = new Renderer();
         timer    = new Timer(1000 / FPS, this);
     }
 
@@ -94,7 +95,15 @@ public class GamePanel extends JPanel implements ActionListener {
     @Override
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
-        renderer.render(g);
+        
+        // We pass primitives and state objects downward so Renderer remains decoupled!
+        double staminaPct = player.stamina / PlayerController.MAX_STAMINA;
+        boolean isMultiplayer = (networkClient != null);
+
+        renderer.render(g, getWidth(), getHeight(), state, 
+                        player.playerX, player.playerY, player.playerAngle, 
+                        player.sprinting, staminaPct, player.exhausted, 
+                        remotePlayer, isMultiplayer);
     }
 
     // ── Update ────────────────────────────────────────────────────────────

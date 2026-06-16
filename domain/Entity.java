@@ -1,4 +1,4 @@
-package entity;
+package domain;
 
 /**
  * Base class for all physical objects in the game world.

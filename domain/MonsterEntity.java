@@ -1,4 +1,4 @@
-package entity;
+package domain;
 
 import AI.Pathfinder;
 import java.util.ArrayList;

@@ -3,7 +3,7 @@ package network;
 import domain.Ball;
 import domain.Door;
 import domain.LevelConfig;
-import entity.MonsterEntity;
+import domain.MonsterEntity;
 import world.MazeGenerator;
 import static domain.GameConstants.TILE_SIZE;
 

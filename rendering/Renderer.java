@@ -6,22 +6,21 @@ import java.awt.Graphics;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
 
-import UI.GamePanel;
-import UI.GameState;
 import domain.GameConstants;
-import UI.PlayerController;
+import domain.GameState;
 import domain.Ball;
 import domain.Door;
 import domain.Item;
+import domain.MonsterEntity;
 import domain.RayHit;
-import entity.MonsterEntity;
 import network.RemotePlayer;
 
 /**
  * Renderer handles all visual output: 3-D raycasted scene, sprite drawing,
  * minimap, HUD, status bar, and game-over / level-complete overlay.
  *
- * It holds a reference to {@link GamePanel} and reads state each frame.
+ * It is completely decoupled from the UI layer and only requires raw primitives
+ * and domain objects to be passed into the render() method.
  */
 public class Renderer implements IRenderer {
     private final TextureRegistry textureRegistry;
@@ -30,13 +29,11 @@ public class Renderer implements IRenderer {
     /** Minimap display size in pixels; tile pixel-size adapts per level. */
     private static final int MINIMAP_PX = 200;
 
-    private final GamePanel game;
     private BufferedImage   screenBuffer;
     private int[]           screenPixels;
     private String          localIP = null;
 
-    public Renderer(GamePanel game) {
-        this.game = game;
+    public Renderer() {
         this.textureRegistry = new TextureRegistry();
     }
 
@@ -44,24 +41,34 @@ public class Renderer implements IRenderer {
     // Public entry-point
     // -----------------------------------------------------------------------
 
-    @Override
-    public void render(Graphics g) {
-        drawScene(g);
-        drawMinimap(g);
-        drawHUD(g);
-        drawStatus(g);
-        drawIPLabel(g);
-        if (game.state.paused)       drawPauseMenu(g);
-        else if (game.state.gameOverMenu) drawGameOverMenu(g);
+    /**
+     * Renders the game. Note that all required data is passed in as parameters.
+     */
+    public void render(Graphics g, int width, int height, GameState state, 
+                       double playerX, double playerY, double playerAngle, 
+                       boolean sprinting, double staminaPct, boolean exhausted, 
+                       RemotePlayer remotePlayer, boolean isMultiplayer) {
+        
+        drawScene(g, width, height, state, playerX, playerY, playerAngle, remotePlayer);
+        drawMinimap(g, state, playerX, playerY, playerAngle, remotePlayer);
+        drawHUD(g, width, state, sprinting);
+        drawStatus(g, state, staminaPct, exhausted);
+        drawIPLabel(g, width, height);
+        
+        if (state.paused) {
+            drawPauseMenu(g, width, height, state, isMultiplayer);
+        } else if (state.gameOverMenu) {
+            drawGameOverMenu(g, width, height, state);
+        }
     }
 
     // -----------------------------------------------------------------------
     // 3-D scene
     // -----------------------------------------------------------------------
 
-    private void drawScene(Graphics g) {
-        int width  = game.getWidth();
-        int height = game.getHeight();
+    private void drawScene(Graphics g, int width, int height, GameState state, 
+                           double playerX, double playerY, double playerAngle, 
+                           RemotePlayer remotePlayer) {
         if (width <= 0 || height <= 0) return;
 
         if (screenBuffer == null
@@ -75,7 +82,7 @@ public class Renderer implements IRenderer {
 
         // ── Sky: flat dark-navy + hash-based stars that drift with playerAngle ──
         int skyColor   = (18 << 16) | (24 << 8) | 60;
-        int starShift  = (int) (game.player.playerAngle * 300.0);
+        int starShift  = (int) (playerAngle * 300.0);
         for (int y = 0; y < horizon; y++) {
             int off = y * width;
             for (int x = 0; x < width; x++) {
@@ -93,7 +100,7 @@ public class Renderer implements IRenderer {
         }
 
         // Crescent moon that tracks playerAngle across the sky
-        drawMoon(screenPixels, width, height, horizon, skyColor);
+        drawMoon(screenPixels, width, height, horizon, skyColor, playerAngle);
 
         // ── Floor: grassy green + depth shading + speckled grass blades ──
         int floorColor = (46 << 16) | (94 << 8) | 42;
@@ -116,13 +123,13 @@ public class Renderer implements IRenderer {
         double fov        = Math.toRadians(60);
         int    rayCount   = width;
         double rayStep    = fov / rayCount;
-        double startAngle = game.player.playerAngle - fov / 2;
+        double startAngle = playerAngle - fov / 2;
         double[] rayDistances = new double[rayCount];
 
         for (int ray = 0; ray < rayCount; ray++) {
             double rayAngle      = startAngle + ray * rayStep;
-            RayHit hit           = castRay(rayAngle);
-            double correctedDist = hit.distance * Math.cos(rayAngle - game.player.playerAngle);
+            RayHit hit           = castRay(rayAngle, state, playerX, playerY);
+            double correctedDist = hit.distance * Math.cos(rayAngle - playerAngle);
             rayDistances[ray]    = correctedDist;
 
             int lineHeight = Math.max(1, Math.min((int) ((TILE_SIZE * height) / correctedDist), height));
@@ -136,7 +143,7 @@ public class Renderer implements IRenderer {
                 int texY  = Math.max(0, Math.min(TEX_SIZE - 1,
                         (int) (((y - lineOffset) * TEX_SIZE) / (double) lineHeight)));
                 int color = hit.texture[hit.textureX][texY];
-                if (!(hit.wallType == Door.DOOR_TILE && game.state.isExitOpen())) {
+                if (!(hit.wallType == Door.DOOR_TILE && state.isExitOpen())) {
                     if (hit.side == 1) color = shadeColor(color, 0.70);
                     color = shadeColor(color,
                             Math.max(0.20, 1.0 / (1.0 + correctedDist * correctedDist * 0.00005)));
@@ -146,21 +153,17 @@ public class Renderer implements IRenderer {
         }
 
         drawBallSprites(screenPixels, width, height, horizon,
-                startAngle, rayStep, rayCount, rayDistances);
+                startAngle, rayStep, rayCount, rayDistances, state, playerX, playerY, playerAngle);
 
         g.drawImage(screenBuffer, 0, 0, null);
-        drawAllMonsterSprites(g, width, height);
-        drawRemotePlayerSprite(g, width, height);
+        drawAllMonsterSprites(g, width, height, state, playerX, playerY, playerAngle);
+        drawRemotePlayerSprite(g, width, height, remotePlayer, state, playerX, playerY, playerAngle);
     }
 
-    /**
-     * Crescent moon at a fixed world direction; slides across the sky as the
-     * player turns so it feels like a real distant object.
-     */
-    private void drawMoon(int[] pixels, int width, int height, int horizon, int skyColor) {
+    private void drawMoon(int[] pixels, int width, int height, int horizon, int skyColor, double playerAngle) {
         double moonWorldAngle = Math.toRadians(120);
         double skySpan        = Math.toRadians(180);
-        double relAngle       = normalizeAngle(moonWorldAngle - game.player.playerAngle);
+        double relAngle       = normalizeAngle(moonWorldAngle - playerAngle);
         if (Math.abs(relAngle) > skySpan / 2) return;
 
         int moonRadius = Math.max(14, height / 16);
@@ -199,29 +202,31 @@ public class Renderer implements IRenderer {
     // Monster sprite rendering
     // -----------------------------------------------------------------------
 
-    private void drawAllMonsterSprites(Graphics g, int width, int height) {
-        game.state.monsters.stream()
+    private void drawAllMonsterSprites(Graphics g, int width, int height, GameState state, 
+                                       double playerX, double playerY, double playerAngle) {
+        state.monsters.stream()
             .sorted((a, b) -> {
-                double da = Math.hypot(a.getX() - game.player.playerX, a.getY() - game.player.playerY);
-                double db = Math.hypot(b.getX() - game.player.playerX, b.getY() - game.player.playerY);
+                double da = Math.hypot(a.getX() - playerX, a.getY() - playerY);
+                double db = Math.hypot(b.getX() - playerX, b.getY() - playerY);
                 return Double.compare(db, da);
             })
-            .forEach(m -> drawMonsterSprite(g, width, height, m));
+            .forEach(m -> drawMonsterSprite(g, width, height, m, state, playerX, playerY, playerAngle));
     }
 
-    private void drawMonsterSprite(Graphics g, int width, int height, MonsterEntity m) {
-        double dx = m.getX() - game.player.playerX;
-        double dy = m.getY() - game.player.playerY;
+    private void drawMonsterSprite(Graphics g, int width, int height, MonsterEntity m, GameState state, 
+                                   double playerX, double playerY, double playerAngle) {
+        double dx = m.getX() - playerX;
+        double dy = m.getY() - playerY;
         double distance = Math.sqrt(dx * dx + dy * dy);
         if (distance <= 0) return;
 
         double angleToMonster = Math.atan2(dy, dx);
-        double relativeAngle  = normalizeAngle(angleToMonster - game.player.playerAngle);
+        double relativeAngle  = normalizeAngle(angleToMonster - playerAngle);
         double fov = Math.toRadians(60);
         if (Math.abs(relativeAngle) > fov / 2) return;
 
         double spritePerpDist = distance * Math.cos(relativeAngle);
-        if (castRayDistance(game.player.playerAngle + relativeAngle) + 1.0 < spritePerpDist) return;
+        if (castRayDistance(playerAngle + relativeAngle, state, playerX, playerY, playerAngle) + 1.0 < spritePerpDist) return;
 
         int screenX  = (int) (((relativeAngle / (fov / 2)) * 0.5 + 0.5) * width);
         int baseSize = Math.max(20, Math.min((int) ((TILE_SIZE * height) / distance * 0.7), 150));
@@ -232,7 +237,7 @@ public class Renderer implements IRenderer {
         int groundY    = horizonY + floorLineH / 2;
 
         // Squish/breathing animation
-        double squishPhase = game.state.floatPhase * 1.5 + (m.getX() + m.getY()) * 0.01;
+        double squishPhase = state.floatPhase * 1.5 + (m.getX() + m.getY()) * 0.01;
         double squish      = Math.sin(squishPhase) * 0.12;
         int spriteW = (int) Math.round(baseSize * (1.0 + squish));
         int spriteH = (int) Math.round(baseSize * (1.0 - squish));
@@ -240,7 +245,7 @@ public class Renderer implements IRenderer {
         int spriteY = groundY  - spriteH;
 
         MonsterRenderer renderer = new MonsterRenderer(m);
-        BufferedImage sprite = renderer.getSprite(game.player.playerX, game.player.playerY);
+        BufferedImage sprite = renderer.getSprite(playerX, playerY);
         if (sprite != null) {
             g.drawImage(sprite, spriteX, spriteY, spriteW, spriteH, null);
         } else {
@@ -255,21 +260,21 @@ public class Renderer implements IRenderer {
     // Remote co-op player sprite
     // -----------------------------------------------------------------------
 
-    private void drawRemotePlayerSprite(Graphics g, int width, int height) {
-        RemotePlayer rp = game.remotePlayer;
+    private void drawRemotePlayerSprite(Graphics g, int width, int height, RemotePlayer rp, GameState state,
+                                        double playerX, double playerY, double playerAngle) {
         if (rp == null) return;
 
-        double dx       = rp.x - game.player.playerX;
-        double dy       = rp.y - game.player.playerY;
+        double dx       = rp.x - playerX;
+        double dy       = rp.y - playerY;
         double distance = Math.sqrt(dx * dx + dy * dy);
         if (distance < 1.0) return;
 
         double angleTo  = Math.atan2(dy, dx);
-        double relAngle = normalizeAngle(angleTo - game.player.playerAngle);
+        double relAngle = normalizeAngle(angleTo - playerAngle);
         double fov      = Math.toRadians(60);
         if (Math.abs(relAngle) > fov / 2) return;
 
-        if (castRayDistance(game.player.playerAngle + relAngle) + 1.0 < distance) return;
+        if (castRayDistance(playerAngle + relAngle, state, playerX, playerY, playerAngle) + 1.0 < distance) return;
 
         int screenX    = (int) (((relAngle / (fov / 2)) * 0.5 + 0.5) * width);
         int spriteH    = Math.max(16, Math.min((int) ((TILE_SIZE * height) / distance * 0.9), 140));
@@ -309,34 +314,35 @@ public class Renderer implements IRenderer {
 
     private void drawBallSprites(int[] pixels, int width, int height, int horizon,
                                  double startAngle, double rayStep,
-                                 int rayCount, double[] rayDistances) {
+                                 int rayCount, double[] rayDistances, GameState state, 
+                                 double playerX, double playerY, double playerAngle) {
         double fov             = Math.toRadians(60);
         double projectionPlane = (width / 2.0) / Math.tan(fov / 2.0);
 
-        for (Item item : game.state.items) {
+        for (Item item : state.items) {
             if (!(item instanceof Ball)) continue;
             Ball ball = (Ball) item;
-            double dx = ball.getX() - game.player.playerX;
-            double dy = ball.getY() - game.player.playerY;
+            double dx = ball.getX() - playerX;
+            double dy = ball.getY() - playerY;
             double distance = Math.sqrt(dx * dx + dy * dy);
             if (distance < 0.1) continue;
 
             double angleToBall = Math.atan2(dy, dx);
-            double angleDiff   = normalizeAngle(angleToBall - game.player.playerAngle);
+            double angleDiff   = normalizeAngle(angleToBall - playerAngle);
             if (Math.abs(angleDiff) > fov / 2.0) continue;
 
             int spriteScreenX = (int) ((width / 2.0) + projectionPlane * Math.tan(angleDiff));
             int spriteSize    = Math.max(18, Math.min((int) ((TILE_SIZE * height) / distance * 0.20), 90));
             int spriteHalf    = spriteSize / 2;
 
-            int floatOffset   = (int) (Math.sin(game.state.floatPhase + distance * 0.05) * 8);
+            int floatOffset   = (int) (Math.sin(state.floatPhase + distance * 0.05) * 8);
             int spriteScreenY = horizon - spriteHalf - 12 + floatOffset;
             int spriteTop     = spriteScreenY - spriteHalf;
             int spriteBottom  = spriteScreenY + spriteHalf;
             int spriteLeft    = spriteScreenX - spriteHalf;
             int spriteRight   = spriteScreenX + spriteHalf;
 
-            if (castRayDistance(game.player.playerAngle + angleDiff) < distance - 1) continue;
+            if (castRayDistance(playerAngle + angleDiff, state, playerX, playerY, playerAngle) < distance - 1) continue;
 
             int baseColor = 0x7ED6FF;
             int glow      = 0xD8F2FF;
@@ -368,12 +374,11 @@ public class Renderer implements IRenderer {
     // HUD / UI overlays
     // -----------------------------------------------------------------------
 
-    private void drawHUD(Graphics g) {
-        int    width       = game.getWidth();
-        int    timeSeconds = (int) (game.state.remainingTimeMillis / 1000);
+    private void drawHUD(Graphics g, int width, GameState state, boolean sprinting) {
+        int    timeSeconds = (int) (state.remainingTimeMillis / 1000);
         String timeStr     = String.format("%02d:%02d", timeSeconds / 60, timeSeconds % 60);
-        String levelStr    = "Level " + game.state.config.level;
-        String sprintStr   = game.player.sprinting ? "  [SPRINT]" : "";
+        String levelStr    = "Level " + state.config.level;
+        String sprintStr   = sprinting ? "  [SPRINT]" : "";
 
         g.setColor(new Color(0, 0, 0, 160));
         g.fillRect(width - 290, 10, 280, 36);
@@ -382,46 +387,43 @@ public class Renderer implements IRenderer {
         g.setColor(Color.WHITE);
         g.drawString(levelStr + "   " + timeStr, width - 278, 32);
 
-        if (game.player.sprinting) {
+        if (sprinting) {
             g.setColor(new Color(255, 220, 50)); 
             int tw = g.getFontMetrics().stringWidth(levelStr + "   " + timeStr);
             g.drawString(sprintStr, width - 278 + tw, 32);
         }
     }
 
-    private void drawStatus(Graphics g) {
-        // FIXED: Count only objective items (Diamonds/Balls) to prevent HUD bugs
+    private void drawStatus(Graphics g, GameState state, double staminaPct, boolean exhausted) {
         int remainingDiamonds = 0;
-        for (Item item : game.state.items) {
+        for (Item item : state.items) {
             if (item instanceof Ball) {
                 remainingDiamonds++;
             }
         }
 
-        int collected = game.state.config.objectiveCount - remainingDiamonds;
+        int collected = state.config.objectiveCount - remainingDiamonds;
         g.setColor(new Color(0, 0, 0, 200));
         g.fillRect(10, 10, 250, 90);
         g.setColor(Color.WHITE);
         g.setFont(g.getFont().deriveFont(16f));
-        g.drawString("Diamonds: " + collected + " / " + game.state.config.objectiveCount, 18, 32);
+        g.drawString("Diamonds: " + collected + " / " + state.config.objectiveCount, 18, 32);
         
-        // FIXED: Display exit message only when Diamonds reach 0
         g.drawString(remainingDiamonds == 0 ? "Now go to the exit." : "Collect all diamonds.", 18, 52);
-        drawStaminaBar(g, 18, 62, 230, 14);
+        drawStaminaBar(g, 18, 62, 230, 14, staminaPct, exhausted);
     }
 
-    private void drawStaminaBar(Graphics g, int x, int y, int w, int h) {
+    private void drawStaminaBar(Graphics g, int x, int y, int w, int h, double staminaPct, boolean exhausted) {
         g.setColor(new Color(50, 50, 50, 220));
         g.fillRoundRect(x, y, w, h, 6, 6);
 
-        double pct   = game.player.stamina / PlayerController.MAX_STAMINA;
-        int    fillW = (int) (w * pct);
+        int    fillW = (int) (w * staminaPct);
         Color  fill;
-        if (game.player.exhausted) {
+        if (exhausted) {
             fill = new Color(100, 100, 100);
-        } else if (pct > 0.50) {
+        } else if (staminaPct > 0.50) {
             fill = new Color(50, 200, 80);
-        } else if (pct > 0.25) {
+        } else if (staminaPct > 0.25) {
             fill = new Color(230, 190, 30);
         } else {
             fill = new Color(210, 50, 50);
@@ -435,13 +437,13 @@ public class Renderer implements IRenderer {
         g.drawRoundRect(x, y, w, h, 6, 6);
 
         g.setFont(g.getFont().deriveFont(10f));
-        String label = game.player.exhausted ? "RECOVERING" : "STAMINA";
-        g.setColor(game.player.exhausted ? new Color(220, 80, 80) : Color.WHITE);
+        String label = exhausted ? "RECOVERING" : "STAMINA";
+        g.setColor(exhausted ? new Color(220, 80, 80) : Color.WHITE);
         g.drawString(label, x + 3, y + h - 2);
     }
 
-    private void drawMinimap(Graphics g) {
-        int mapSize = game.state.config.mapSize;
+    private void drawMinimap(Graphics g, GameState state, double playerX, double playerY, double playerAngle, RemotePlayer rp) {
+        int mapSize = state.config.mapSize;
         int tilePx  = MINIMAP_PX / mapSize;
         int mapPx   = mapSize * tilePx;
         int offsetX = 10;
@@ -452,24 +454,23 @@ public class Renderer implements IRenderer {
 
         for (int y = 0; y < mapSize; y++) {
             for (int x = 0; x < mapSize; x++) {
-                if (x == game.state.exitTileX && y == game.state.exitTileY) {
-                    drawMinimapDoor(g, offsetX, offsetY, x, y, tilePx);
+                if (x == state.exitTileX && y == state.exitTileY) {
+                    drawMinimapDoor(g, offsetX, offsetY, x, y, tilePx, state.isExitOpen());
                     continue;
                 }
-                g.setColor(game.state.map[y][x] > 0 ? Color.DARK_GRAY : Color.LIGHT_GRAY);
+                g.setColor(state.map[y][x] > 0 ? Color.DARK_GRAY : Color.LIGHT_GRAY);
                 g.fillRect(offsetX + x * tilePx, offsetY + y * tilePx, tilePx, tilePx);
             }
         }
 
-        int px = (int) (game.player.playerX / TILE_SIZE * tilePx);
-        int py = (int) (game.player.playerY / TILE_SIZE * tilePx);
+        int px = (int) (playerX / TILE_SIZE * tilePx);
+        int py = (int) (playerY / TILE_SIZE * tilePx);
         g.setColor(Color.RED);
         g.fillOval(offsetX + px - 4, offsetY + py - 4, 8, 8);
         g.drawLine(offsetX + px, offsetY + py,
-                   offsetX + px + (int) (Math.cos(game.player.playerAngle) * 10),
-                   offsetY + py + (int) (Math.sin(game.player.playerAngle) * 10));
+                   offsetX + px + (int) (Math.cos(playerAngle) * 10),
+                   offsetY + py + (int) (Math.sin(playerAngle) * 10));
 
-        RemotePlayer rp = game.remotePlayer;
         if (rp != null) {
             int rpx = (int) (rp.x / TILE_SIZE * tilePx);
             int rpy = (int) (rp.y / TILE_SIZE * tilePx);
@@ -482,24 +483,24 @@ public class Renderer implements IRenderer {
         }
 
         g.setColor(Color.BLUE);
-        g.fillOval(offsetX + GameState.START_TILE_X * tilePx + 2, offsetY + GameState.START_TILE_Y * tilePx + 2, 6, 6);
+        // Assuming GameState START_TILE is (1, 1) per standard logic
+        g.fillOval(offsetX + 1 * tilePx + 2, offsetY + 1 * tilePx + 2, 6, 6);
 
-        // FIXED: Implemented polymorphism! No more instanceof checks for minimap item rendering
-        for (Item item : game.state.items) {
+        for (Item item : state.items) {
             int itemPx = offsetX + (int) (item.getX() / TILE_SIZE * tilePx);
             int itemPy = offsetY + (int) (item.getY() / TILE_SIZE * tilePx);
             
             item.drawOnMinimap(g, itemPx, itemPy);
         }
 
-        for (MonsterEntity m : game.state.monsters) {
+        for (MonsterEntity m : state.monsters) {
             MonsterRenderer renderer = new MonsterRenderer(m);
             renderer.drawOnMinimap(g, offsetX, offsetY, tilePx);
         }
     }
 
-    private void drawMinimapDoor(Graphics g, int offsetX, int offsetY, int x, int y, int tilePx) {
-        if (game.state.isExitOpen()) {
+    private void drawMinimapDoor(Graphics g, int offsetX, int offsetY, int x, int y, int tilePx, boolean isExitOpen) {
+        if (isExitOpen) {
             g.setColor(Color.WHITE);
             g.fillRect(offsetX + x * tilePx, offsetY + y * tilePx, tilePx, tilePx);
         } else {
@@ -514,13 +515,11 @@ public class Renderer implements IRenderer {
         }
     }
 
-    private void drawIPLabel(Graphics g) {
+    private void drawIPLabel(Graphics g, int width, int height) {
         if (localIP == null) {
             try { localIP = java.net.InetAddress.getLocalHost().getHostAddress(); }
             catch (Exception e) { localIP = "?.?.?.?"; }
         }
-        int width  = game.getWidth();
-        int height = game.getHeight();
         String text = "IP: " + localIP;
         g.setFont(g.getFont().deriveFont(12f));
         int sw = g.getFontMetrics().stringWidth(text);
@@ -530,14 +529,11 @@ public class Renderer implements IRenderer {
         g.drawString(text, width - sw - 13, height - 10);
     }
 
-    private void drawPauseMenu(Graphics g) {
-        int width  = game.getWidth();
-        int height = game.getHeight();
-
+    private void drawPauseMenu(Graphics g, int width, int height, GameState state, boolean isMultiplayer) {
         g.setColor(new Color(0, 0, 0, 160));
         g.fillRect(0, 0, width, height);
 
-        int numOpts       = game.state.pauseMenuOptions.length;
+        int numOpts       = state.pauseMenuOptions.length;
         int boxWidth      = 460;
         int titleAreaH    = 130;
         int optionSpacing = 58;
@@ -559,9 +555,9 @@ public class Renderer implements IRenderer {
 
         g.setFont(g.getFont().deriveFont(26f));
         for (int i = 0; i < numOpts; i++) {
-            String opt = game.state.pauseMenuOptions[i];
+            String opt = state.pauseMenuOptions[i];
             int oy = boxY + titleAreaH + i * optionSpacing;
-            if (i == game.state.pauseMenuSelected) {
+            if (i == state.pauseMenuSelected) {
                 g.setColor(new Color(50, 100, 220));
                 g.fillRoundRect(width / 2 - 160, oy - 32, 320, 44, 12, 12);
                 g.setColor(Color.WHITE);
@@ -572,7 +568,7 @@ public class Renderer implements IRenderer {
             g.drawString(opt, width / 2 - ow / 2, oy);
         }
 
-        if (game.networkClient != null) {
+        if (isMultiplayer) {
             g.setFont(g.getFont().deriveFont(11f));
             g.setColor(new Color(140, 140, 150));
             String note = "Game continues in the background (multiplayer)";
@@ -587,30 +583,27 @@ public class Renderer implements IRenderer {
         }
     }
 
-    private void drawGameOverMenu(Graphics g) {
-        int width  = game.getWidth();
-        int height = game.getHeight();
-
-        boolean finalVictory = game.state.victory && game.state.config.isLast();
-        boolean levelWon     = game.state.victory && !game.state.config.isLast();
+    private void drawGameOverMenu(Graphics g, int width, int height, GameState state) {
+        boolean finalVictory = state.victory && state.config.isLast();
+        boolean levelWon     = state.victory && !state.config.isLast();
 
         String title, subtitle;
         if (finalVictory) {
             title    = "You Win!";
             subtitle = "All 3 levels cleared!";
         } else if (levelWon) {
-            title    = "Level " + game.state.config.level + " Complete!";
-            subtitle = "Get ready for Level " + (game.state.config.level + 1) + "...";
+            title    = "Level " + state.config.level + " Complete!";
+            subtitle = "Get ready for Level " + (state.config.level + 1) + "...";
         } else {
             title    = "Game Over";
-            subtitle = game.state.remotePlayerLeft ? "Other player disconnected." : "You were defeated.";
+            subtitle = state.remotePlayerLeft ? "Other player disconnected." : "You were defeated.";
         }
 
         g.setColor(new Color(0, 0, 0, 200));
         g.fillRect(0, 0, width, height);
 
         int boxWidth  = 440;
-        int boxHeight = 60 + game.state.menuOptions.length * 34 + 80;
+        int boxHeight = 60 + state.menuOptions.length * 34 + 80;
         int boxX = width  / 2 - boxWidth  / 2;
         int boxY = height / 2 - boxHeight / 2;
 
@@ -629,10 +622,10 @@ public class Renderer implements IRenderer {
         g.drawString(subtitle, width / 2 - subW / 2, boxY + 85);
 
         g.setFont(g.getFont().deriveFont(22f));
-        for (int i = 0; i < game.state.menuOptions.length; i++) {
-            String option = game.state.menuOptions[i];
+        for (int i = 0; i < state.menuOptions.length; i++) {
+            String option = state.menuOptions[i];
             int optionY   = boxY + 115 + i * 34;
-            if (i == game.state.selectedMenuOption) {
+            if (i == state.selectedMenuOption) {
                 g.setColor(new Color(50, 100, 220));
                 g.fillRoundRect(width / 2 - 110, optionY - 24, 220, 30, 12, 12);
                 g.setColor(Color.WHITE);
@@ -654,23 +647,23 @@ public class Renderer implements IRenderer {
     // Raycasting
     // -----------------------------------------------------------------------
 
-    private RayHit castRay(double rayAngle) {
+    private RayHit castRay(double rayAngle, GameState state, double playerX, double playerY) {
         double rayDirX = Math.cos(rayAngle);
         double rayDirY = Math.sin(rayAngle);
-        int    mapSize = game.state.config.mapSize;
+        int    mapSize = state.config.mapSize;
 
-        int mapX = (int) (game.player.playerX / TILE_SIZE);
-        int mapY = (int) (game.player.playerY / TILE_SIZE);
+        int mapX = (int) (playerX / TILE_SIZE);
+        int mapY = (int) (playerY / TILE_SIZE);
 
         double deltaDistX = rayDirX == 0 ? 1e30 : Math.abs(TILE_SIZE / rayDirX);
         double deltaDistY = rayDirY == 0 ? 1e30 : Math.abs(TILE_SIZE / rayDirY);
         int    stepX, stepY;
         double sideDistX, sideDistY;
 
-        if (rayDirX < 0) { stepX = -1; sideDistX = (game.player.playerX - mapX * TILE_SIZE) * deltaDistX / TILE_SIZE; }
-        else             { stepX =  1; sideDistX = ((mapX + 1) * TILE_SIZE - game.player.playerX) * deltaDistX / TILE_SIZE; }
-        if (rayDirY < 0) { stepY = -1; sideDistY = (game.player.playerY - mapY * TILE_SIZE) * deltaDistY / TILE_SIZE; }
-        else             { stepY =  1; sideDistY = ((mapY + 1) * TILE_SIZE - game.player.playerY) * deltaDistY / TILE_SIZE; }
+        if (rayDirX < 0) { stepX = -1; sideDistX = (playerX - mapX * TILE_SIZE) * deltaDistX / TILE_SIZE; }
+        else             { stepX =  1; sideDistX = ((mapX + 1) * TILE_SIZE - playerX) * deltaDistX / TILE_SIZE; }
+        if (rayDirY < 0) { stepY = -1; sideDistY = (playerY - mapY * TILE_SIZE) * deltaDistY / TILE_SIZE; }
+        else             { stepY =  1; sideDistY = ((mapY + 1) * TILE_SIZE - playerY) * deltaDistY / TILE_SIZE; }
 
         boolean hit = false;
         int side = 0, wallType = 1;
@@ -678,16 +671,16 @@ public class Renderer implements IRenderer {
             if (sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; side = 0; }
             else                       { sideDistY += deltaDistY; mapY += stepY; side = 1; }
             if (mapX < 0 || mapX >= mapSize || mapY < 0 || mapY >= mapSize) break;
-            int tile = game.state.getMapTile(mapX, mapY);
+            int tile = state.getMapTile(mapX, mapY);
             if (tile > 0) { hit = true; wallType = tile; }
         }
 
         double dist = (side == 0)
-                ? (mapX * TILE_SIZE - game.player.playerX + (1 - stepX) * TILE_SIZE / 2.0) / rayDirX
-                : (mapY * TILE_SIZE - game.player.playerY + (1 - stepY) * TILE_SIZE / 2.0) / rayDirY;
+                ? (mapX * TILE_SIZE - playerX + (1 - stepX) * TILE_SIZE / 2.0) / rayDirX
+                : (mapY * TILE_SIZE - playerY + (1 - stepY) * TILE_SIZE / 2.0) / rayDirY;
         if (dist <= 0) dist = 1;
 
-        double wallX = (side == 0) ? game.player.playerY + dist * rayDirY : game.player.playerX + dist * rayDirX;
+        double wallX = (side == 0) ? playerY + dist * rayDirY : playerX + dist * rayDirX;
         wallX %= TILE_SIZE;
         if (wallX < 0) wallX += TILE_SIZE;
 
@@ -696,7 +689,7 @@ public class Renderer implements IRenderer {
         if ((side == 0 && rayDirX > 0) || (side == 1 && rayDirY < 0)) textureX = TEX_SIZE - 1 - textureX;
 
         int[][] texture;
-        if (wallType == Door.DOOR_TILE && game.state.isExitOpen()) {
+        if (wallType == Door.DOOR_TILE && state.isExitOpen()) {
              texture = TextureFactory.createOpenDoor(); // Handle specific state override
         } else {
              texture = textureRegistry.get(wallType); // Cleanly fetch by ID!
@@ -704,23 +697,23 @@ public class Renderer implements IRenderer {
         return new RayHit(dist, wallType, textureX, side, texture);
     }
 
-    private double castRayDistance(double rayAngle) {
+    private double castRayDistance(double rayAngle, GameState state, double playerX, double playerY, double playerAngle) {
         double rayDirX = Math.cos(rayAngle);
         double rayDirY = Math.sin(rayAngle);
-        int    mapSize = game.state.config.mapSize;
+        int    mapSize = state.config.mapSize;
 
-        int mapX = (int) (game.player.playerX / TILE_SIZE);
-        int mapY = (int) (game.player.playerY / TILE_SIZE);
+        int mapX = (int) (playerX / TILE_SIZE);
+        int mapY = (int) (playerY / TILE_SIZE);
 
         double deltaDistX = rayDirX == 0 ? 1e30 : Math.abs(TILE_SIZE / rayDirX);
         double deltaDistY = rayDirY == 0 ? 1e30 : Math.abs(TILE_SIZE / rayDirY);
         int    stepX, stepY;
         double sideDistX, sideDistY;
 
-        if (rayDirX < 0) { stepX = -1; sideDistX = (game.player.playerX - mapX * TILE_SIZE) * deltaDistX / TILE_SIZE; }
-        else             { stepX =  1; sideDistX = ((mapX + 1) * TILE_SIZE - game.player.playerX) * deltaDistX / TILE_SIZE; }
-        if (rayDirY < 0) { stepY = -1; sideDistY = (game.player.playerY - mapY * TILE_SIZE) * deltaDistY / TILE_SIZE; }
-        else             { stepY =  1; sideDistY = ((mapY + 1) * TILE_SIZE - game.player.playerY) * deltaDistY / TILE_SIZE; }
+        if (rayDirX < 0) { stepX = -1; sideDistX = (playerX - mapX * TILE_SIZE) * deltaDistX / TILE_SIZE; }
+        else             { stepX =  1; sideDistX = ((mapX + 1) * TILE_SIZE - playerX) * deltaDistX / TILE_SIZE; }
+        if (rayDirY < 0) { stepY = -1; sideDistY = (playerY - mapY * TILE_SIZE) * deltaDistY / TILE_SIZE; }
+        else             { stepY =  1; sideDistY = ((mapY + 1) * TILE_SIZE - playerY) * deltaDistY / TILE_SIZE; }
 
         boolean hit = false;
         int side = 0;
@@ -728,14 +721,14 @@ public class Renderer implements IRenderer {
             if (sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; side = 0; }
             else                       { sideDistY += deltaDistY; mapY += stepY; side = 1; }
             if (mapX < 0 || mapX >= mapSize || mapY < 0 || mapY >= mapSize) break;
-            if (game.state.getMapTile(mapX, mapY) > 0) hit = true;
+            if (state.getMapTile(mapX, mapY) > 0) hit = true;
         }
 
         double dist = (side == 0)
-                ? (mapX * TILE_SIZE - game.player.playerX + (1 - stepX) * TILE_SIZE / 2.0) / (rayDirX == 0 ? 1e-6 : rayDirX)
-                : (mapY * TILE_SIZE - game.player.playerY + (1 - stepY) * TILE_SIZE / 2.0) / (rayDirY == 0 ? 1e-6 : rayDirY);
+                ? (mapX * TILE_SIZE - playerX + (1 - stepX) * TILE_SIZE / 2.0) / (rayDirX == 0 ? 1e-6 : rayDirX)
+                : (mapY * TILE_SIZE - playerY + (1 - stepY) * TILE_SIZE / 2.0) / (rayDirY == 0 ? 1e-6 : rayDirY);
         if (dist <= 0) dist = 1;
-        return dist * Math.cos(rayAngle - game.player.playerAngle);
+        return dist * Math.cos(rayAngle - playerAngle);
     }
 
     // -----------------------------------------------------------------------

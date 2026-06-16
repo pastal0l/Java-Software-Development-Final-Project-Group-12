@@ -1,11 +1,6 @@
-package UI;
+package domain;
 
 import audio.ISoundPlayer;
-import domain.Ball;
-import domain.Door;
-import domain.Item;
-import domain.LevelConfig;
-import entity.MonsterEntity;
 import network.INetworkClient;
 import world.IMapGenerator;
 import static domain.GameConstants.TILE_SIZE;
@@ -118,7 +113,7 @@ public class GameState {
 
     public int getCurrentLevelIndex() { return currentLevelIndex; }
 
-    public boolean collectItems(PlayerController player) {
+    public boolean collectItems(IPlayer player) {
         boolean collectedSomething = false;
 
         // Loop backwards so we can safely remove items while iterating

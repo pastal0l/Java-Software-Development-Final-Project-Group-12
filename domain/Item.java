@@ -1,6 +1,5 @@
 package domain;
 
-import entity.Entity;
 import java.awt.Graphics;
 
 public abstract class Item extends Entity {

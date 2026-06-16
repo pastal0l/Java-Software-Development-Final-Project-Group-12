@@ -2,6 +2,8 @@ package UI;
 
 import audio.ISoundPlayer;
 import static domain.GameConstants.TILE_SIZE;
+
+import domain.GameState;
 import domain.IPlayer;
 
 public class PlayerController implements IPlayer {
